@@ -167,9 +167,8 @@ export default function SlimeEnemy({ position, name, arenaBounds }: EnemyProps) 
         {/* Slime Body */}
         <mesh castShadow receiveShadow position={[0, 0.6, 0]}>
           <sphereGeometry args={[0.7, 16, 16]} />
-          <meshStandardMaterial
+          <meshToonMaterial
             color={ctx.hitFlash ? '#ffffff' : '#22c55e'}
-            roughness={0.2}
             transparent
             opacity={0.9}
             emissive={ctx.hitFlash ? '#ffffff' : '#15803d'}
@@ -180,11 +179,11 @@ export default function SlimeEnemy({ position, name, arenaBounds }: EnemyProps) 
         {/* Cute Eyes */}
         <mesh position={[0.25, 0.8, 0.5]}>
           <sphereGeometry args={[0.1, 8, 8]} />
-          <meshStandardMaterial color="#000000" />
+          <meshToonMaterial color="#000000" />
         </mesh>
         <mesh position={[-0.25, 0.8, 0.5]}>
           <sphereGeometry args={[0.1, 8, 8]} />
-          <meshStandardMaterial color="#000000" />
+          <meshToonMaterial color="#000000" />
         </mesh>
 
         {/* Shockwave Ring */}

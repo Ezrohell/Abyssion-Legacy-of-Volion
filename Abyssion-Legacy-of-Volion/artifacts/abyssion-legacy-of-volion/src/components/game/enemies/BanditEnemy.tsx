@@ -192,17 +192,17 @@ export default function BanditEnemy({ position, name, arenaBounds }: EnemyProps)
         {/* Humanoid Torso */}
         <mesh castShadow position={[0, 1.0, 0]}>
           <boxGeometry args={[0.6, 0.9, 0.4]} />
-          <meshStandardMaterial color={ctx.hitFlash ? '#ffffff' : '#b91c1c'} />
+          <meshToonMaterial color={ctx.hitFlash ? '#ffffff' : '#b91c1c'} />
         </mesh>
 
         {/* Head with Red Bandana */}
         <mesh castShadow position={[0, 1.65, 0]}>
           <sphereGeometry args={[0.25, 12, 12]} />
-          <meshStandardMaterial color="#fca5a5" />
+          <meshToonMaterial color="#fca5a5" />
         </mesh>
         <mesh position={[0, 1.72, 0]}>
           <cylinderGeometry args={[0.27, 0.27, 0.1, 12]} />
-          <meshStandardMaterial color="#ef4444" />
+          <meshToonMaterial color="#ef4444" />
         </mesh>
 
         {/* Sword Arm & Sword */}
@@ -210,12 +210,12 @@ export default function BanditEnemy({ position, name, arenaBounds }: EnemyProps)
           {/* Arm */}
           <mesh position={[0, -0.2, 0]}>
             <boxGeometry args={[0.2, 0.6, 0.2]} />
-            <meshStandardMaterial color="#b91c1c" />
+            <meshToonMaterial color="#b91c1c" />
           </mesh>
           {/* Iron Sword */}
           <mesh position={[0, -0.1, 0.6]} rotation={[Math.PI / 3, 0, 0]}>
             <boxGeometry args={[0.06, 0.08, 1.1]} />
-            <meshStandardMaterial color="#e2e8f0" metalness={0.8} roughness={0.2} />
+            <meshToonMaterial color="#e2e8f0" />
           </mesh>
         </group>
       </group>

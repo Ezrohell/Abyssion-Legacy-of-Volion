@@ -50,7 +50,7 @@ function LootItem({ loot }: { loot: any }) {
         onClick={() => handleCollect()}
       >
         <sphereGeometry args={[0.3, 16, 16]} />
-        <meshStandardMaterial color={loot.color} emissive={loot.color} emissiveIntensity={0.5} />
+        <meshToonMaterial color={loot.color} emissive={loot.color} emissiveIntensity={0.5} />
       </mesh>
       <Html position={[0, 1, 0]} center distanceFactor={12}>
         <button

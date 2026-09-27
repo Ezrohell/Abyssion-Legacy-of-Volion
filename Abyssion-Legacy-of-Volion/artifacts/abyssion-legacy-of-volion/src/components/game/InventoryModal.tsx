@@ -95,7 +95,7 @@ function CharacterPreview() {
   const skin = '#c8956c';
   const cloth = '#3f4a5a';
   const armourColor = '#8f9aa6';
-  const metal = { color: armourColor, metalness: 0.55, roughness: 0.4 } as const;
+  const metal = { color: armourColor } as const;
 
   return (
     <div className="relative h-[90px] w-[90px] sm:h-[100px] sm:w-[100px] shrink-0 pointer-events-none select-none rounded-lg border border-gray-800 bg-gray-950/90 overflow-hidden">
@@ -109,34 +109,34 @@ function CharacterPreview() {
           {/* Head — helmet cap renders only when the Helmet slot is filled */}
           <mesh position={[0, 1.62, 0]} castShadow>
             <sphereGeometry args={[0.19, 16, 16]} />
-            <meshStandardMaterial color={skin} roughness={0.7} />
+            <meshToonMaterial color={skin} />
           </mesh>
           {helmetDef && (
             <mesh position={[0, 1.7, 0]} castShadow>
               <sphereGeometry args={[0.21, 12, 8, 0, Math.PI * 2, 0, Math.PI / 2]} />
-              <meshStandardMaterial {...metal} />
+              <meshToonMaterial {...metal} />
             </mesh>
           )}
           {/* Torso — chestplate renders only when the Chest slot is filled */}
           <mesh position={[0, 1.12, 0]} castShadow>
             <cylinderGeometry args={[0.24, 0.19, 0.62, 12]} />
-            <meshStandardMaterial color={chestDef ? armourColor : cloth} metalness={chestDef ? 0.55 : 0} roughness={chestDef ? 0.4 : 0.85} />
+            <meshToonMaterial color={chestDef ? armourColor : cloth} />
           </mesh>
           {/* Pelvis/leggings — leggings region renders only when filled */}
           <mesh position={[0, 0.76, 0]} castShadow>
             <boxGeometry args={[0.36, 0.18, 0.24]} />
-            <meshStandardMaterial color={leggingsDef ? armourColor : cloth} metalness={leggingsDef ? 0.55 : 0} roughness={leggingsDef ? 0.4 : 0.85} />
+            <meshToonMaterial color={leggingsDef ? armourColor : cloth} />
           </mesh>
           {/* Arms (shoulder pads show armour state too) */}
           {[-1, 1].map((side) => (
             <group key={side} position={[side * 0.3, 1.34, 0]}>
               <mesh castShadow>
                 <sphereGeometry args={[0.11, 10, 10]} />
-                <meshStandardMaterial color={chestDef ? armourColor : cloth} metalness={chestDef ? 0.55 : 0} roughness={chestDef ? 0.4 : 0.85} />
+                <meshToonMaterial color={chestDef ? armourColor : cloth} />
               </mesh>
               <mesh position={[side * 0.06, -0.24, 0]} castShadow>
                 <cylinderGeometry args={[0.06, 0.05, 0.5, 8]} />
-                <meshStandardMaterial color={skin} roughness={0.7} />
+                <meshToonMaterial color={skin} />
               </mesh>
             </group>
           ))}
@@ -144,14 +144,14 @@ function CharacterPreview() {
           {[-1, 1].map((side) => (
             <mesh key={side} position={[side * 0.12, 0.38, 0]} castShadow>
               <cylinderGeometry args={[0.08, 0.06, 0.62, 8]} />
-              <meshStandardMaterial color={leggingsDef ? armourColor : cloth} metalness={leggingsDef ? 0.55 : 0} roughness={leggingsDef ? 0.4 : 0.85} />
+              <meshToonMaterial color={leggingsDef ? armourColor : cloth} />
             </mesh>
           ))}
           {/* Boots — boots state */}
           {[-1, 1].map((side) => (
             <mesh key={side} position={[side * 0.12, 0.06, 0.04]} castShadow>
               <boxGeometry args={[0.14, 0.12, 0.26]} />
-              <meshStandardMaterial color={bootsDef ? armourColor : '#2a2320'} metalness={bootsDef ? 0.55 : 0} roughness={bootsDef ? 0.4 : 0.9} />
+              <meshToonMaterial color={bootsDef ? armourColor : '#2a2320'} />
             </mesh>
           ))}
           {/* Weapon attached to the right hand — reflects the authoritative
@@ -160,11 +160,11 @@ function CharacterPreview() {
             <group position={[0.42, 0.86, 0.12]} rotation={[0, 0, -0.35]}>
               <mesh castShadow>
                 <boxGeometry args={[0.05, 0.9, 0.02]} />
-                <meshStandardMaterial color="#b8bcc4" metalness={0.8} roughness={0.3} />
+                <meshToonMaterial color="#b8bcc4" />
               </mesh>
               <mesh position={[0, -0.5, 0]} castShadow>
                 <boxGeometry args={[0.04, 0.18, 0.04]} />
-                <meshStandardMaterial color="#4a3220" />
+                <meshToonMaterial color="#4a3220" />
               </mesh>
             </group>
           )}
@@ -172,11 +172,11 @@ function CharacterPreview() {
             <group position={[0.42, 0.92, 0.18]}>
               <mesh castShadow>
                 <boxGeometry args={[0.08, 0.1, 0.42]} />
-                <meshStandardMaterial color="#5a5f66" metalness={0.7} roughness={0.35} />
+                <meshToonMaterial color="#5a5f66" />
               </mesh>
               <mesh position={[0, -0.1, 0.1]} castShadow>
                 <boxGeometry args={[0.07, 0.16, 0.1]} />
-                <meshStandardMaterial color="#3a2c1e" />
+                <meshToonMaterial color="#3a2c1e" />
               </mesh>
             </group>
           )}
@@ -184,7 +184,7 @@ function CharacterPreview() {
             <group position={[0.42, 0.9, 0.14]} rotation={[0, 0, -0.2]}>
               <mesh castShadow>
                 <boxGeometry args={[0.04, 0.4, 0.02]} />
-                <meshStandardMaterial color="#b8bcc4" metalness={0.8} roughness={0.3} />
+                <meshToonMaterial color="#b8bcc4" />
               </mesh>
             </group>
           )}
@@ -192,11 +192,11 @@ function CharacterPreview() {
             <group position={[0.44, 0.85, 0.1]} rotation={[0, 0, -0.12]}>
               <mesh castShadow>
                 <cylinderGeometry args={[0.025, 0.03, 1.4, 6]} />
-                <meshStandardMaterial color="#4a3220" />
+                <meshToonMaterial color="#4a3220" />
               </mesh>
               <mesh position={[0, 0.74, 0]}>
                 <sphereGeometry args={[0.07, 10, 10]} />
-                <meshStandardMaterial color="#38bdf8" emissive="#38bdf8" emissiveIntensity={1.4} />
+                <meshToonMaterial color="#38bdf8" emissive="#38bdf8" emissiveIntensity={1.4} />
               </mesh>
             </group>
           )}

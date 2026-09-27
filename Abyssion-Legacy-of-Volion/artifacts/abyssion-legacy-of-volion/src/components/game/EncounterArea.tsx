@@ -80,7 +80,7 @@ export default function EncounterArea() {
         />
          <mesh position={[0, -0.47, 0]} receiveShadow>
           <boxGeometry args={[EC.floorWidth, 1, EC.floorDepth]} />
-          <meshStandardMaterial color={EC.floorColor} roughness={0.9} />
+          <meshToonMaterial color={EC.floorColor} />
         </mesh>
       </RigidBody>
 
@@ -89,7 +89,7 @@ export default function EncounterArea() {
       <RigidBody type="fixed" position={[0, EC.wallHeight / 2, -EC.floorDepth / 2]}>
         <mesh castShadow receiveShadow>
           <boxGeometry args={[EC.floorWidth, EC.wallHeight, 0.5]} />
-          <meshStandardMaterial color={EC.wallColor} roughness={0.85} />
+          <meshToonMaterial color={EC.wallColor} />
         </mesh>
       </RigidBody>
       {/* Front wall — split with 4-unit entrance gap in the center */}
@@ -102,26 +102,26 @@ export default function EncounterArea() {
             <RigidBody type="fixed" position={[-segCenter, EC.wallHeight / 2, EC.floorDepth / 2]}>
               <mesh castShadow receiveShadow>
                 <boxGeometry args={[segWidth, EC.wallHeight, 0.5]} />
-                <meshStandardMaterial color={EC.wallColor} roughness={0.85} />
+                <meshToonMaterial color={EC.wallColor} />
               </mesh>
             </RigidBody>
             <RigidBody type="fixed" position={[segCenter, EC.wallHeight / 2, EC.floorDepth / 2]}>
               <mesh castShadow receiveShadow>
                 <boxGeometry args={[segWidth, EC.wallHeight, 0.5]} />
-                <meshStandardMaterial color={EC.wallColor} roughness={0.85} />
+                <meshToonMaterial color={EC.wallColor} />
               </mesh>
             </RigidBody>
             {/* Entrance gate pillars */}
             <RigidBody type="fixed" position={[-gapWidth / 2, EC.pillarHeight / 2, EC.floorDepth / 2]}>
               <mesh castShadow receiveShadow>
                 <cylinderGeometry args={[EC.pillarRadius, EC.pillarRadius, EC.pillarHeight, 8]} />
-                <meshStandardMaterial color={EC.pillarColor} roughness={0.8} />
+                <meshToonMaterial color={EC.pillarColor} />
               </mesh>
             </RigidBody>
             <RigidBody type="fixed" position={[gapWidth / 2, EC.pillarHeight / 2, EC.floorDepth / 2]}>
               <mesh castShadow receiveShadow>
                 <cylinderGeometry args={[EC.pillarRadius, EC.pillarRadius, EC.pillarHeight, 8]} />
-                <meshStandardMaterial color={EC.pillarColor} roughness={0.8} />
+                <meshToonMaterial color={EC.pillarColor} />
               </mesh>
             </RigidBody>
           </>
@@ -130,13 +130,13 @@ export default function EncounterArea() {
       <RigidBody type="fixed" position={[-EC.floorWidth / 2, EC.wallHeight / 2, 0]}>
         <mesh castShadow receiveShadow>
           <boxGeometry args={[0.5, EC.wallHeight, EC.floorDepth]} />
-          <meshStandardMaterial color={EC.wallColor} roughness={0.85} />
+          <meshToonMaterial color={EC.wallColor} />
         </mesh>
       </RigidBody>
       <RigidBody type="fixed" position={[EC.floorWidth / 2, EC.wallHeight / 2, 0]}>
         <mesh castShadow receiveShadow>
           <boxGeometry args={[0.5, EC.wallHeight, EC.floorDepth]} />
-          <meshStandardMaterial color={EC.wallColor} roughness={0.85} />
+          <meshToonMaterial color={EC.wallColor} />
         </mesh>
       </RigidBody>
 
@@ -150,7 +150,7 @@ export default function EncounterArea() {
         <RigidBody key={i} type="fixed" position={[px, EC.pillarHeight / 2, pz]}>
           <mesh castShadow receiveShadow>
             <cylinderGeometry args={[EC.pillarRadius, EC.pillarRadius, EC.pillarHeight, 8]} />
-            <meshStandardMaterial color={EC.pillarColor} roughness={0.8} />
+            <meshToonMaterial color={EC.pillarColor} />
           </mesh>
         </RigidBody>
       ))}
@@ -158,7 +158,7 @@ export default function EncounterArea() {
       {/* Entrance marker — glowing strip on the near wall */}
       <mesh position={[0, 0.05, EC.entranceMarkerZ]} rotation={[-Math.PI / 2, 0, 0]}>
         <planeGeometry args={[4, 0.3]} />
-        <meshStandardMaterial color="#fbbf24" emissive="#f59e0b" emissiveIntensity={0.8} />
+        <meshToonMaterial color="#fbbf24" emissive="#f59e0b" emissiveIntensity={0.8} />
       </mesh>
     </group>
 
@@ -194,7 +194,7 @@ export default function EncounterArea() {
         <group position={[0, 1, EC.portalZ]}>
           <mesh ref={portalRef}>
             <torusGeometry args={[EC.portalRadius, 0.15, 16, 32]} />
-            <meshStandardMaterial
+            <meshToonMaterial
               color="#38bdf8"
               emissive="#0ea5e9"
               emissiveIntensity={1.2}

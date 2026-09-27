@@ -112,7 +112,7 @@ export default function EnemyDummy({ position, name, color = '#ef4444' }: EnemyD
     <RigidBody ref={rigidBodyRef} type="kinematicPosition" position={position} mass={5}>
       <mesh receiveShadow castShadow position={[0, 1, 0]}>
         <cylinderGeometry args={[0.5, 0.5, 2]} />
-        <meshStandardMaterial color={hitFlash ? '#ffffff' : color} emissive={hitFlash ? '#ffffff' : '#000000'} emissiveIntensity={hitFlash ? 0.8 : 0} />
+        <meshToonMaterial color={hitFlash ? '#ffffff' : color} emissive={hitFlash ? '#ffffff' : '#000000'} emissiveIntensity={hitFlash ? 0.8 : 0} />
       </mesh>
 
       <Html position={[0, 2.4, 0]} center distanceFactor={12}>

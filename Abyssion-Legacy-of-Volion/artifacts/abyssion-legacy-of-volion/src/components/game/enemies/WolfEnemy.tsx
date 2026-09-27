@@ -167,45 +167,45 @@ export default function WolfEnemy({ position, name, arenaBounds }: EnemyProps) {
         {/* Main Body */}
         <mesh castShadow receiveShadow position={[0, 0.4, 0]}>
           <boxGeometry args={[0.7, 0.7, 1.4]} />
-          <meshStandardMaterial color={ctx.hitFlash ? '#ffffff' : '#334155'} />
+          <meshToonMaterial color={ctx.hitFlash ? '#ffffff' : '#334155'} />
         </mesh>
 
         {/* Wolf Head */}
         <mesh castShadow position={[0, 0.7, 0.8]}>
           <boxGeometry args={[0.5, 0.5, 0.6]} />
-          <meshStandardMaterial color={ctx.hitFlash ? '#ffffff' : '#1e293b'} />
+          <meshToonMaterial color={ctx.hitFlash ? '#ffffff' : '#1e293b'} />
         </mesh>
 
         {/* Snout */}
         <mesh castShadow position={[0, 0.6, 1.2]}>
           <boxGeometry args={[0.3, 0.3, 0.4]} />
-          <meshStandardMaterial color="#0f172a" />
+          <meshToonMaterial color="#0f172a" />
         </mesh>
 
         {/* Glowing Red Eyes */}
         <mesh position={[0.15, 0.8, 1.0]}>
           <boxGeometry args={[0.08, 0.08, 0.08]} />
-          <meshStandardMaterial color="#ef4444" emissive="#ef4444" emissiveIntensity={1.5} />
+          <meshToonMaterial color="#ef4444" emissive="#ef4444" emissiveIntensity={1.5} />
         </mesh>
         <mesh position={[-0.15, 0.8, 1.0]}>
           <boxGeometry args={[0.08, 0.08, 0.08]} />
-          <meshStandardMaterial color="#ef4444" emissive="#ef4444" emissiveIntensity={1.5} />
+          <meshToonMaterial color="#ef4444" emissive="#ef4444" emissiveIntensity={1.5} />
         </mesh>
 
         {/* Ears */}
         <mesh position={[0.2, 1.05, 0.7]} rotation={[0.2, 0, 0]}>
           <coneGeometry args={[0.12, 0.3, 4]} />
-          <meshStandardMaterial color="#1e293b" />
+          <meshToonMaterial color="#1e293b" />
         </mesh>
         <mesh position={[-0.2, 1.05, 0.7]} rotation={[0.2, 0, 0]}>
           <coneGeometry args={[0.12, 0.3, 4]} />
-          <meshStandardMaterial color="#1e293b" />
+          <meshToonMaterial color="#1e293b" />
         </mesh>
 
         {/* Tail */}
         <mesh position={[0, 0.5, -0.9]} rotation={[-0.5, 0, 0]}>
           <cylinderGeometry args={[0.08, 0.15, 0.8]} />
-          <meshStandardMaterial color="#1e293b" />
+          <meshToonMaterial color="#1e293b" />
         </mesh>
       </group>
     );

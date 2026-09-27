@@ -54,7 +54,7 @@ export default function Checkpoint({ position, name = 'Campfire Checkpoint' }: C
       {/* Stone Base Ring */}
       <mesh position={[0, 0.1, 0]} receiveShadow>
         <cylinderGeometry args={[1.2, 1.4, 0.2, 12]} />
-        <meshStandardMaterial color="#475569" roughness={0.9} />
+        <meshToonMaterial color="#475569" />
       </mesh>
 
       {/* Wooden Logs / Rune Pillars */}
@@ -65,7 +65,7 @@ export default function Checkpoint({ position, name = 'Campfire Checkpoint' }: C
         return (
           <mesh key={i} position={[x, 0.25, z]} rotation={[0.2, angle, 0.2]} castShadow>
             <cylinderGeometry args={[0.08, 0.1, 0.6, 6]} />
-            <meshStandardMaterial color="#78350f" />
+            <meshToonMaterial color="#78350f" />
           </mesh>
         );
       })}
@@ -73,11 +73,10 @@ export default function Checkpoint({ position, name = 'Campfire Checkpoint' }: C
       {/* Flame / Energy Orb */}
       <mesh ref={flameMeshRef} position={[0, 0.6, 0]}>
         <octahedronGeometry args={[0.35, 2]} />
-        <meshStandardMaterial
+        <meshToonMaterial
           color={isActive ? '#f59e0b' : '#38bdf8'}
           emissive={isActive ? '#f59e0b' : '#0284c7'}
           emissiveIntensity={isActive ? 2.5 : 1.2}
-          roughness={0.2}
         />
       </mesh>
 

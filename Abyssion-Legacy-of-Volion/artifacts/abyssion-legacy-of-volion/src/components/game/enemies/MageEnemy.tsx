@@ -76,7 +76,7 @@ export default function MageEnemy({ position, name }: EnemyProps) {
       } else {
         explosionMeshRef.current.visible = true;
         explosionMeshRef.current.scale.setScalar(exp.scale);
-        (explosionMeshRef.current.material as THREE.MeshStandardMaterial).opacity = exp.opacity;
+        (explosionMeshRef.current.material as THREE.MeshToonMaterial).opacity = exp.opacity;
         explosionMeshRef.current.position.set(
           exp.pos.x - currentPosRef.current.x,
           exp.pos.y - currentPosRef.current.y,
@@ -133,7 +133,7 @@ export default function MageEnemy({ position, name }: EnemyProps) {
     // Glow staff orb
     if (staffOrbRef.current) {
       const glow = (Math.sin(Date.now() * 0.008) + 1) * 0.5;
-      (staffOrbRef.current.material as THREE.MeshStandardMaterial).emissiveIntensity = 0.5 + glow * 1.5;
+      (staffOrbRef.current.material as THREE.MeshToonMaterial).emissiveIntensity = 0.5 + glow * 1.5;
     }
 
     // Handle Kiting / Distance Maintenance during Chase
@@ -245,31 +245,31 @@ export default function MageEnemy({ position, name }: EnemyProps) {
         {/* Robe Body */}
         <mesh castShadow position={[0, 0.9, 0]}>
           <cylinderGeometry args={[0.3, 0.6, 1.4, 12]} />
-          <meshStandardMaterial color={ctx.hitFlash ? '#ffffff' : '#581c87'} />
+          <meshToonMaterial color={ctx.hitFlash ? '#ffffff' : '#581c87'} />
         </mesh>
 
         {/* Caster Hood/Head */}
         <mesh castShadow position={[0, 1.7, 0]}>
           <sphereGeometry args={[0.25, 12, 12]} />
-          <meshStandardMaterial color="#3b0764" />
+          <meshToonMaterial color="#3b0764" />
         </mesh>
 
         {/* Wizard Hat */}
         <mesh position={[0, 2.1, 0]} rotation={[0.2, 0, 0]}>
           <coneGeometry args={[0.4, 0.8, 12]} />
-          <meshStandardMaterial color="#3b0764" />
+          <meshToonMaterial color="#3b0764" />
         </mesh>
 
         {/* Magic Staff */}
         <group position={[0.4, 1.0, 0.2]}>
           <mesh position={[0, 0, 0]}>
             <cylinderGeometry args={[0.04, 0.04, 1.8]} />
-            <meshStandardMaterial color="#78350f" />
+            <meshToonMaterial color="#78350f" />
           </mesh>
           {/* Staff Orb */}
           <mesh ref={staffOrbRef} position={[0, 0.95, 0]}>
             <sphereGeometry args={[0.18, 12, 12]} />
-            <meshStandardMaterial color="#c084fc" emissive="#a855f7" emissiveIntensity={1.2} />
+            <meshToonMaterial color="#c084fc" emissive="#a855f7" emissiveIntensity={1.2} />
           </mesh>
         </group>
 
@@ -277,7 +277,7 @@ export default function MageEnemy({ position, name }: EnemyProps) {
         {projectiles.map((p) => (
           <mesh key={p.id} position={[p.pos.x - currentPosRef.current.x, p.pos.y - currentPosRef.current.y, p.pos.z - currentPosRef.current.z]}>
             <sphereGeometry args={[0.35, 12, 12]} />
-            <meshStandardMaterial color="#d8b4fe" emissive="#c084fc" emissiveIntensity={2.0} />
+            <meshToonMaterial color="#d8b4fe" emissive="#c084fc" emissiveIntensity={2.0} />
             <pointLight color="#a855f7" intensity={2} distance={5} />
           </mesh>
         ))}
@@ -285,7 +285,7 @@ export default function MageEnemy({ position, name }: EnemyProps) {
         {/* Explosion Shockwave Effect — animated via ref, no per-frame React state */}
         <mesh ref={explosionMeshRef} visible={false}>
           <sphereGeometry args={[1.5, 16, 16]} />
-          <meshStandardMaterial color="#a855f7" transparent opacity={0} emissive="#c084fc" emissiveIntensity={1.5} />
+          <meshToonMaterial color="#a855f7" transparent opacity={0} emissive="#c084fc" emissiveIntensity={1.5} />
         </mesh>
       </group>
     );

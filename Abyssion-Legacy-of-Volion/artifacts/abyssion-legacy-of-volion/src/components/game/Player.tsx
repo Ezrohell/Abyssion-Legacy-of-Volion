@@ -99,23 +99,23 @@ const slashArcGeometry = new THREE.TorusGeometry(1.4, 0.05, 6, 14, Math.PI * 0.6
 const slashArcMaterial = new THREE.MeshBasicMaterial({ color: '#e2e8f0', transparent: true, opacity: 0.85 });
 // Crossbow arrow visuals — created once, reused across every arrow.
 const arrowShaftGeo = new THREE.CylinderGeometry(0.02, 0.02, 0.55, 5);
-const arrowShaftMat = new THREE.MeshStandardMaterial({ color: '#d6b370', roughness: 0.8 });
+const arrowShaftMat = new THREE.MeshToonMaterial({ color: '#d6b370' });
 const arrowHeadGeo = new THREE.ConeGeometry(0.05, 0.14, 5);
-const arrowHeadMat = new THREE.MeshStandardMaterial({ color: '#9aa3ad', metalness: 0.7, roughness: 0.35 });
+const arrowHeadMat = new THREE.MeshToonMaterial({ color: '#9aa3ad' });
 
 // Shared Water Staff spell visual assets — created once, reused across casts.
 // Per-instance opacity is constant for every spell kind, so materials can be
 // shared too; only transforms vary per instance.
 const waveArcGeo = new THREE.TorusGeometry(0.55, 0.12, 8, 16, Math.PI);
-const waveArcMat = new THREE.MeshStandardMaterial({ color: '#22d3ee', emissive: '#0891b2', emissiveIntensity: 0.8, transparent: true, opacity: 0.85, metalness: 0.2, roughness: 0.2 });
+const waveArcMat = new THREE.MeshToonMaterial({ color: '#22d3ee', emissive: '#0891b2', emissiveIntensity: 0.8, transparent: true, opacity: 0.85 });
 const waveEdgeGeo = new THREE.BoxGeometry(1.1, 0.04, 0.12);
 const waveEdgeMat = new THREE.MeshBasicMaterial({ color: '#a5f3fc', transparent: true, opacity: 0.9 });
 const bulletOrbGeo = new THREE.SphereGeometry(0.1, 8, 8);
-const bulletOrbMat = new THREE.MeshStandardMaterial({ color: '#67e8f9', emissive: '#06b6d4', emissiveIntensity: 1.0, metalness: 0.1, roughness: 0.1 });
+const bulletOrbMat = new THREE.MeshToonMaterial({ color: '#67e8f9', emissive: '#06b6d4', emissiveIntensity: 1.0 });
 const bulletTracerGeo = new THREE.CylinderGeometry(0.02, 0.05, 0.6, 6);
 const bulletTracerMat = new THREE.MeshBasicMaterial({ color: '#a5f3fc', transparent: true, opacity: 0.45 });
 const ballOrbGeo = new THREE.SphereGeometry(0.22, 12, 12);
-const ballOrbMat = new THREE.MeshStandardMaterial({ color: '#22d3ee', emissive: '#0284c7', emissiveIntensity: 0.8, metalness: 0.2, roughness: 0.15 });
+const ballOrbMat = new THREE.MeshToonMaterial({ color: '#22d3ee', emissive: '#0284c7', emissiveIntensity: 0.8 });
 const ballHaloGeo = new THREE.SphereGeometry(0.32, 12, 12);
 const ballHaloMat = new THREE.MeshBasicMaterial({ color: '#7dd3fc', transparent: true, opacity: 0.25, depthWrite: false });
 
@@ -162,7 +162,7 @@ export default function Player() {
   // jump, fall, attack, dodge and hit transforms.
   const armourSlots = useGameStore((s) => s.player.equippedArmourSlots);
   const armourArmorColor = '#8f9aa6';
-  const armourMetalProps = { color: armourArmorColor, metalness: 0.55, roughness: 0.4 } as const;
+  const armourMetalProps = { color: armourArmorColor } as const;
   const { camera } = useThree() as { camera: THREE.PerspectiveCamera };
   const { rapier, world } = useRapier();
   const setPlayerPosition = useGameStore(state => state.setPlayerPosition);
@@ -2222,18 +2222,18 @@ export default function Player() {
         <group ref={hipsGroupRef} position={[0, 0.72, 0]}>
           <mesh castShadow>
             <boxGeometry args={[0.36, 0.2, 0.24]} />
-            <meshStandardMaterial color="#3f4a5a" roughness={0.9} />
+            <meshToonMaterial color="#3f4a5a" />
           </mesh>
           <mesh position={[0, -0.05, 0]} castShadow>
             <cylinderGeometry args={[0.2, 0.2, 0.08, 10]} />
-            <meshStandardMaterial color="#4a3520" roughness={0.9} />
+            <meshToonMaterial color="#4a3520" />
           </mesh>
           {/* Leggings (M1W2D6 #5): hip skirt attached to the pelvis group,
               following the leg chain origin. */}
           {armourSlots?.leggings && (
             <mesh position={[0, -0.18, 0]} castShadow>
               <cylinderGeometry args={[0.21, 0.23, 0.22, 10]} />
-              <meshStandardMaterial {...armourMetalProps} />
+              <meshToonMaterial {...armourMetalProps} />
             </mesh>
           )}
 
@@ -2241,45 +2241,45 @@ export default function Player() {
           <group ref={leftLegGroupRef} position={[0.13, -0.1, 0]}>
             <mesh position={[0, -0.3, 0]} castShadow>
               <cylinderGeometry args={[0.08, 0.1, 0.62, 8]} />
-              <meshStandardMaterial color="#3a3f4b" roughness={0.9} />
+              <meshToonMaterial color="#3a3f4b" />
             </mesh>
             {/* Lower leg + boot inside the same limb group */}
             <mesh position={[0, -0.62, 0]} castShadow>
               <cylinderGeometry args={[0.07, 0.08, 0.3, 8]} />
-              <meshStandardMaterial color="#2f3540" roughness={0.9} />
+              <meshToonMaterial color="#2f3540" />
             </mesh>
             <mesh position={[0, -0.82, 0.04]} castShadow>
               <boxGeometry args={[0.16, 0.12, 0.26]} />
-              <meshStandardMaterial color="#241d16" roughness={0.95} />
+              <meshToonMaterial color="#241d16" />
             </mesh>
             {/* Boot armour (M1W2D6 #5): attached inside the leg group so it
                 follows every leg transform. */}
             {armourSlots?.boots && (
               <mesh position={[0, -0.84, 0.04]} castShadow>
                 <boxGeometry args={[0.18, 0.1, 0.28]} />
-                <meshStandardMaterial {...armourMetalProps} />
+                <meshToonMaterial {...armourMetalProps} />
               </mesh>
             )}
           </group>
           <group ref={rightLegGroupRef} position={[-0.13, -0.1, 0]}>
             <mesh position={[0, -0.3, 0]} castShadow>
               <cylinderGeometry args={[0.08, 0.1, 0.62, 8]} />
-              <meshStandardMaterial color="#3a3f4b" roughness={0.9} />
+              <meshToonMaterial color="#3a3f4b" />
             </mesh>
             <mesh position={[0, -0.62, 0]} castShadow>
               <cylinderGeometry args={[0.07, 0.08, 0.3, 8]} />
-              <meshStandardMaterial color="#2f3540" roughness={0.9} />
+              <meshToonMaterial color="#2f3540" />
             </mesh>
             <mesh position={[0, -0.82, 0.04]} castShadow>
               <boxGeometry args={[0.16, 0.12, 0.26]} />
-              <meshStandardMaterial color="#241d16" roughness={0.95} />
+              <meshToonMaterial color="#241d16" />
             </mesh>
             {/* Boot armour (M1W2D6 #5): attached inside the leg group so it
                 follows every leg transform. */}
             {armourSlots?.boots && (
               <mesh position={[0, -0.84, 0.04]} castShadow>
                 <boxGeometry args={[0.18, 0.1, 0.28]} />
-                <meshStandardMaterial {...armourMetalProps} />
+                <meshToonMaterial {...armourMetalProps} />
               </mesh>
             )}
           </group>
@@ -2293,22 +2293,22 @@ export default function Player() {
           <group ref={bodyMeshGroupRef}>
             <mesh position={[0, 0.13, 0]} castShadow>
               <cylinderGeometry args={[0.24, 0.19, 0.68, 10]} />
-              <meshStandardMaterial color="#3b5b8c" roughness={0.85} />
+              <meshToonMaterial color="#3b5b8c" />
             </mesh>
             {/* Chestplate (M1W2D6 #5): attached to the torso group. */}
             {armourSlots?.chest && (
               <mesh position={[0, 0.15, 0.02]} castShadow>
                 <cylinderGeometry args={[0.255, 0.2, 0.5, 10]} />
-                <meshStandardMaterial {...armourMetalProps} />
+                <meshToonMaterial {...armourMetalProps} />
               </mesh>
             )}
             <mesh position={[0.28, 0.42, 0]} castShadow>
               <sphereGeometry args={[0.11, 8, 8]} />
-              <meshStandardMaterial color="#2c3e5c" roughness={0.8} />
+              <meshToonMaterial color="#2c3e5c" />
             </mesh>
             <mesh position={[-0.28, 0.42, 0]} castShadow>
               <sphereGeometry args={[0.11, 8, 8]} />
-              <meshStandardMaterial color="#2c3e5c" roughness={0.8} />
+              <meshToonMaterial color="#2c3e5c" />
             </mesh>
           </group>
           {/* Arms originate at the shoulder positions. Right hand = weapon
@@ -2317,11 +2317,11 @@ export default function Player() {
             <group ref={armMeshRightRef}>
               <mesh position={[0, -0.26, 0.03]} rotation={[0.12, 0, 0.12]} castShadow>
                 <cylinderGeometry args={[0.06, 0.075, 0.52, 8]} />
-                <meshStandardMaterial color="#3b5b8c" roughness={0.85} />
+                <meshToonMaterial color="#3b5b8c" />
               </mesh>
               <mesh position={[0.01, -0.53, 0.07]} castShadow>
                 <sphereGeometry args={[0.07, 6, 6]} />
-                <meshStandardMaterial color="#d8a37a" roughness={0.9} />
+                <meshToonMaterial color="#d8a37a" />
               </mesh>
             </group>
             {/* Water Staff - child of the right arm group, shown only when
@@ -2331,17 +2331,17 @@ export default function Player() {
                 {/* Shaft */}
                 <mesh position={[0, 0.1, 0]} castShadow>
                   <cylinderGeometry args={[0.045, 0.06, 1.7, 8]} />
-                  <meshStandardMaterial color="#4a3520" roughness={0.8} />
+                  <meshToonMaterial color="#4a3520" />
                 </mesh>
                 {/* Bronze ferrule */}
                 <mesh position={[0, 0.72, 0]} castShadow>
                   <cylinderGeometry args={[0.07, 0.07, 0.14, 8]} />
-                  <meshStandardMaterial color="#8c6d2f" metalness={0.6} roughness={0.4} />
+                  <meshToonMaterial color="#8c6d2f" />
                 </mesh>
                 {/* Water orb head */}
                 <mesh position={[0, 0.95, 0]} castShadow>
                   <sphereGeometry args={[0.14, 12, 12]} />
-                  <meshStandardMaterial color="#38bdf8" emissive="#0ea5e9" emissiveIntensity={0.7} metalness={0.2} roughness={0.15} />
+                  <meshToonMaterial color="#38bdf8" emissive="#0ea5e9" emissiveIntensity={0.7} />
                 </mesh>
                 {/* Orb glow halo */}
                 <mesh position={[0, 0.95, 0]}>
@@ -2357,7 +2357,7 @@ export default function Player() {
                 {/* Barrel + breech */}
                 <mesh position={[0, 0.35, 0.15]} castShadow>
                   <boxGeometry args={[0.07, 0.7, 0.09]} />
-                  <meshStandardMaterial color="#4a4f57" metalness={0.8} roughness={0.3} />
+                  <meshToonMaterial color="#4a4f57" />
                 </mesh>
                 {/* Muzzle flash — parented at the actual barrel tip (z = 0.15 + 0.35 + 0.045),
                     faces +Z along the firing direction; visible only during the
@@ -2369,12 +2369,12 @@ export default function Player() {
                 {/* Stock */}
                 <mesh position={[0, -0.05, -0.05]} rotation={[0.25, 0, 0]} castShadow>
                   <boxGeometry args={[0.08, 0.45, 0.11]} />
-                  <meshStandardMaterial color="#5a3d22" roughness={0.75} />
+                  <meshToonMaterial color="#5a3d22" />
                 </mesh>
                 {/* Grip */}
                 <mesh position={[0, -0.18, 0.06]} rotation={[0.5, 0, 0]} castShadow>
                   <boxGeometry args={[0.07, 0.24, 0.09]} />
-                  <meshStandardMaterial color="#4a3018" roughness={0.7} />
+                  <meshToonMaterial color="#4a3018" />
                 </mesh>
               </group>
             </group>
@@ -2385,20 +2385,20 @@ export default function Player() {
                 {/* Stock + limbs */}
                 <mesh position={[0, 0, 0.1]} castShadow>
                   <boxGeometry args={[0.07, 0.4, 0.5]} />
-                  <meshStandardMaterial color="#5a3d22" roughness={0.75} />
+                  <meshToonMaterial color="#5a3d22" />
                 </mesh>
                 <mesh position={[0, 0.1, 0.35]} castShadow>
                   <boxGeometry args={[0.06, 0.08, 0.5]} />
-                  <meshStandardMaterial color="#4a4f57" metalness={0.8} roughness={0.3} />
+                  <meshToonMaterial color="#4a4f57" />
                 </mesh>
                 <mesh position={[0, 0.2, 0.3]} castShadow>
                   <boxGeometry args={[0.05, 0.05, 0.3]} />
-                  <meshStandardMaterial color="#4a4f57" metalness={0.8} roughness={0.3} />
+                  <meshToonMaterial color="#4a4f57" />
                 </mesh>
                 {/* Bowstring */}
                 <mesh position={[0, 0.2, 0.1]}>
                   <boxGeometry args={[0.02, 0.02, 0.42]} />
-                  <meshStandardMaterial color="#cbd5e1" roughness={0.9} />
+                  <meshToonMaterial color="#cbd5e1" />
                 </mesh>
               </group>
             </group>
@@ -2408,7 +2408,7 @@ export default function Player() {
               <group position={[0.14, -0.24, 0.28]}>
                 <mesh castShadow>
                   <octahedronGeometry args={[0.18, 0]} />
-                  <meshStandardMaterial color="#a78bfa" emissive="#7c3aed" emissiveIntensity={0.9} metalness={0.3} roughness={0.15} />
+                  <meshToonMaterial color="#a78bfa" emissive="#7c3aed" emissiveIntensity={0.9} />
                 </mesh>
                 <mesh>
                   <octahedronGeometry args={[0.26, 0]} />
@@ -2423,15 +2423,15 @@ export default function Player() {
                 {/* Left-hand blade (bright) */}
                 <mesh position={[0, 0.28, 0]} castShadow>
                   <boxGeometry args={[0.05, 0.55, 0.1]} />
-                  <meshStandardMaterial color="#dbe4ee" metalness={0.75} roughness={0.25} />
+                  <meshToonMaterial color="#dbe4ee" />
                 </mesh>
                 <mesh position={[0, -0.05, 0]} castShadow>
                   <boxGeometry args={[0.2, 0.05, 0.1]} />
-                  <meshStandardMaterial color="#8c6d2f" metalness={0.5} roughness={0.4} />
+                  <meshToonMaterial color="#8c6d2f" />
                 </mesh>
                 <mesh position={[0, -0.16, 0]} castShadow>
                   <cylinderGeometry args={[0.03, 0.035, 0.2, 8]} />
-                  <meshStandardMaterial color="#3a2a18" />
+                  <meshToonMaterial color="#3a2a18" />
                 </mesh>
               </group>
             </group>
@@ -2442,17 +2442,17 @@ export default function Player() {
                 {/* Blade */}
                 <mesh position={[0, 0.5, 0]} castShadow>
                   <boxGeometry args={[0.08, 1.1, 0.15]} />
-                  <meshStandardMaterial color="#e2e8f0" metalness={0.8} roughness={0.2} />
+                  <meshToonMaterial color="#e2e8f0" />
                 </mesh>
                 {/* Guard */}
                 <mesh position={[0, 0, 0]} castShadow>
                   <boxGeometry args={[0.35, 0.08, 0.15]} />
-                  <meshStandardMaterial color="#eab308" />
+                  <meshToonMaterial color="#eab308" />
                 </mesh>
                 {/* Handle */}
                 <mesh position={[0, -0.2, 0]} castShadow>
                   <cylinderGeometry args={[0.04, 0.04, 0.3]} />
-                  <meshStandardMaterial color="#78350f" />
+                  <meshToonMaterial color="#78350f" />
                 </mesh>
                 {/* Weapon trail — lightweight plane that follows the blade tip */}
                 <mesh ref={trailMeshRef} position={[0, 0.5, 0]} visible={false}>
@@ -2466,11 +2466,11 @@ export default function Player() {
             <group ref={armMeshLeftRef}>
               <mesh position={[0, -0.26, 0.03]} rotation={[0.12, 0, -0.12]} castShadow>
                 <cylinderGeometry args={[0.06, 0.075, 0.52, 8]} />
-                <meshStandardMaterial color="#3b5b8c" roughness={0.85} />
+                <meshToonMaterial color="#3b5b8c" />
               </mesh>
               <mesh position={[-0.01, -0.53, 0.07]} castShadow>
                 <sphereGeometry args={[0.07, 6, 6]} />
-                <meshStandardMaterial color="#d8a37a" roughness={0.9} />
+                <meshToonMaterial color="#d8a37a" />
               </mesh>
             </group>
             {/* Dual Daggers - left-arm blade (source label: "left-hand blade
@@ -2480,15 +2480,15 @@ export default function Player() {
                 {/* Right-hand blade (blued) */}
                 <mesh position={[0, 0.28, 0]} castShadow>
                   <boxGeometry args={[0.05, 0.55, 0.1]} />
-                  <meshStandardMaterial color="#4b5a6b" metalness={0.75} roughness={0.3} />
+                  <meshToonMaterial color="#4b5a6b" />
                 </mesh>
                 <mesh position={[0, -0.05, 0]} castShadow>
                   <boxGeometry args={[0.2, 0.05, 0.1]} />
-                  <meshStandardMaterial color="#8c6d2f" metalness={0.5} roughness={0.4} />
+                  <meshToonMaterial color="#8c6d2f" />
                 </mesh>
                 <mesh position={[0, -0.16, 0]} castShadow>
                   <cylinderGeometry args={[0.03, 0.035, 0.2, 8]} />
-                  <meshStandardMaterial color="#3a2a18" />
+                  <meshToonMaterial color="#3a2a18" />
                 </mesh>
               </group>
             </group>
@@ -2500,24 +2500,24 @@ export default function Player() {
             {armourSlots?.helmet && (
               <mesh position={[0, 0.22, 0]} castShadow>
                 <sphereGeometry args={[0.21, 12, 8, 0, Math.PI * 2, 0, Math.PI / 2]} />
-                <meshStandardMaterial {...armourMetalProps} />
+                <meshToonMaterial {...armourMetalProps} />
               </mesh>
             )}
             <mesh position={[0, 0.02, 0]} castShadow>
               <cylinderGeometry args={[0.13, 0.16, 0.1, 10]} />
-              <meshStandardMaterial color="#8c2f2f" roughness={0.9} />
+              <meshToonMaterial color="#8c2f2f" />
             </mesh>
             <mesh position={[0, 0.18, 0]} castShadow>
               <sphereGeometry args={[0.19, 12, 12]} />
-              <meshStandardMaterial color="#d8a37a" roughness={0.85} />
+              <meshToonMaterial color="#d8a37a" />
             </mesh>
             <mesh position={[0, 0.25, -0.03]} castShadow>
               <sphereGeometry args={[0.2, 10, 10]} />
-              <meshStandardMaterial color="#4a3520" roughness={0.95} />
+              <meshToonMaterial color="#4a3520" />
             </mesh>
             <mesh position={[0, 0.19, 0.16]} castShadow>
               <boxGeometry args={[0.22, 0.06, 0.06]} />
-              <meshStandardMaterial color="#1e3a8a" roughness={0.5} />
+              <meshToonMaterial color="#1e3a8a" />
             </mesh>
           </group>
         </group>

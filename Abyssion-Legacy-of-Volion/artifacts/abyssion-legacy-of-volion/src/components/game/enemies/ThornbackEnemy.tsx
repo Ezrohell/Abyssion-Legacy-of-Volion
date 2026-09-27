@@ -169,34 +169,34 @@ export default function ThornbackEnemy({ position, name, arenaBounds }: EnemyPro
       {/* Armoured carapace body */}
       <mesh castShadow receiveShadow position={[0, 0.45, 0]}>
         <boxGeometry args={[1.0, 0.7, 1.3]} />
-        <meshStandardMaterial color={ctx.hitFlash ? '#ffffff' : '#4d3a2a'} roughness={0.85} />
+        <meshToonMaterial color={ctx.hitFlash ? '#ffffff' : '#4d3a2a'} />
       </mesh>
       {/* Spiked ridge — the "thornback" silhouette */}
       {[-0.45, -0.15, 0.15, 0.45].map((z, i) => (
         <mesh key={i} position={[0, 0.85, z]} rotation={[0, 0, 0]}>
           <coneGeometry args={[0.09, 0.3, 4]} />
-          <meshStandardMaterial color="#2c2016" roughness={0.9} />
+          <meshToonMaterial color="#2c2016" />
         </mesh>
       ))}
       {/* Head */}
       <mesh castShadow position={[0, 0.45, 0.85]}>
         <boxGeometry args={[0.6, 0.45, 0.5]} />
-        <meshStandardMaterial color={ctx.hitFlash ? '#ffffff' : '#3a2b1d'} roughness={0.85} />
+        <meshToonMaterial color={ctx.hitFlash ? '#ffffff' : '#3a2b1d'} />
       </mesh>
       {/* Eyes */}
       <mesh position={[0.16, 0.6, 1.05]}>
         <boxGeometry args={[0.09, 0.09, 0.09]} />
-        <meshStandardMaterial color="#facc15" emissive="#f59e0b" emissiveIntensity={1.2} />
+        <meshToonMaterial color="#facc15" emissive="#f59e0b" emissiveIntensity={1.2} />
       </mesh>
       <mesh position={[-0.16, 0.6, 1.05]}>
         <boxGeometry args={[0.09, 0.09, 0.09]} />
-        <meshStandardMaterial color="#facc15" emissive="#f59e0b" emissiveIntensity={1.2} />
+        <meshToonMaterial color="#facc15" emissive="#f59e0b" emissiveIntensity={1.2} />
       </mesh>
       {/* Sturdy legs */}
       {[[0.5, 0.4], [-0.5, 0.4], [0.5, -0.4], [-0.5, -0.4]].map(([x, z], i) => (
         <mesh key={i} castShadow position={[x, 0.1, z]}>
           <boxGeometry args={[0.18, 0.35, 0.18]} />
-          <meshStandardMaterial color="#2c2016" roughness={0.9} />
+          <meshToonMaterial color="#2c2016" />
         </mesh>
       ))}
     </group>

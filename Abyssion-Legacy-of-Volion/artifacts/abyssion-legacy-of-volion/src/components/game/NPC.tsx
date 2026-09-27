@@ -608,19 +608,19 @@ export default function NPC({ data }: NPCProps) {
       {/* Base Ring / Shadow */}
       <mesh position={[0, 0.02, 0]} receiveShadow>
         <cylinderGeometry args={[0.8, 0.9, 0.04, 16]} />
-        <meshStandardMaterial color="#1e293b" opacity={0.6} transparent />
+        <meshToonMaterial color="#1e293b" opacity={0.6} transparent />
       </mesh>
 
       {/* Body / Tunic */}
       <mesh position={[0, 0.9, 0]} castShadow receiveShadow>
         <cylinderGeometry args={[0.32, 0.45, 1.3, 12]} />
-        <meshStandardMaterial color={colors.tunic} roughness={0.6} />
+        <meshToonMaterial color={colors.tunic} />
       </mesh>
 
       {/* Head */}
       <mesh ref={headRef} position={[0, 1.75, 0]} castShadow>
         <sphereGeometry args={[0.26, 16, 16]} />
-        <meshStandardMaterial color="#fde047" roughness={0.4} />
+        <meshToonMaterial color="#fde047" />
       </mesh>
 
       {/* Eyes */}
@@ -637,25 +637,25 @@ export default function NPC({ data }: NPCProps) {
       {data.type === 'villager' && (
         <mesh position={[0, 1.95, 0]}>
           <coneGeometry args={[0.35, 0.4, 12]} />
-          <meshStandardMaterial color={colors.hat} />
+          <meshToonMaterial color={colors.hat} />
         </mesh>
       )}
       {data.type === 'guard' && (
         <mesh position={[0, 1.9, 0]}>
           <boxGeometry args={[0.3, 0.2, 0.32]} />
-          <meshStandardMaterial color={colors.hat} metalness={0.8} roughness={0.2} />
+          <meshToonMaterial color={colors.hat} />
         </mesh>
       )}
       {data.type === 'researcher' && (
         <mesh position={[0, 2.0, 0]}>
           <coneGeometry args={[0.4, 0.6, 12]} />
-          <meshStandardMaterial color={colors.hat} />
+          <meshToonMaterial color={colors.hat} />
         </mesh>
       )}
       {data.type === 'healer' && (
         <mesh position={[0, 1.95, 0]}>
           <cylinderGeometry args={[0.3, 0.28, 0.3, 12]} />
-          <meshStandardMaterial color={colors.hat} />
+          <meshToonMaterial color={colors.hat} />
         </mesh>
       )}
 
@@ -663,20 +663,20 @@ export default function NPC({ data }: NPCProps) {
       {data.type === 'villager' && (
         <mesh position={[0.4, 1.0, 0.2]} rotation={[0, 0, -0.15]}>
           <cylinderGeometry args={[0.03, 0.03, 1.6, 8]} />
-          <meshStandardMaterial color="#78350f" />
+          <meshToonMaterial color="#78350f" />
         </mesh>
       )}
       {data.type === 'guard' && (
         <mesh position={[0.42, 1.2, 0.2]}>
           <cylinderGeometry args={[0.02, 0.03, 2.2, 8]} />
-          <meshStandardMaterial color="#94a3b8" metalness={0.9} />
+          <meshToonMaterial color="#94a3b8" />
         </mesh>
       )}
       {data.type === 'blacksmith' && (
         <group position={[-0.5, 0.5, 0.3]}>
           <mesh position={[0, 0.3, 0]}>
             <boxGeometry args={[0.5, 0.4, 0.6]} />
-            <meshStandardMaterial color="#334155" metalness={0.8} />
+            <meshToonMaterial color="#334155" />
           </mesh>
         </group>
       )}
@@ -684,33 +684,33 @@ export default function NPC({ data }: NPCProps) {
         <group position={[0, 0.4, 0.5]}>
           <mesh position={[0, 0.2, 0]}>
             <boxGeometry args={[1.2, 0.4, 0.5]} />
-            <meshStandardMaterial color="#78350f" />
+            <meshToonMaterial color="#78350f" />
           </mesh>
           <mesh position={[-0.3, 0.45, 0]}>
             <sphereGeometry args={[0.08, 8, 8]} />
-            <meshStandardMaterial color="#ef4444" />
+            <meshToonMaterial color="#ef4444" />
           </mesh>
           <mesh position={[0.3, 0.45, 0]}>
             <sphereGeometry args={[0.08, 8, 8]} />
-            <meshStandardMaterial color="#22c55e" />
+            <meshToonMaterial color="#22c55e" />
           </mesh>
         </group>
       )}
       {data.type === 'researcher' && (
         <mesh ref={propRef} position={[0.4, 1.6, 0]}>
           <octahedronGeometry args={[0.16, 2]} />
-          <meshStandardMaterial color="#c084fc" emissive="#a855f7" emissiveIntensity={2} />
+          <meshToonMaterial color="#c084fc" emissive="#a855f7" emissiveIntensity={2} />
         </mesh>
       )}
       {data.type === 'healer' && (
         <group position={[0.4, 0.8, 0.3]}>
           <mesh position={[0, 0, 0]}>
             <cylinderGeometry args={[0.03, 0.03, 1.5, 8]} />
-            <meshStandardMaterial color="#059669" />
+            <meshToonMaterial color="#059669" />
           </mesh>
           <mesh position={[0, 0.8, 0]}>
             <sphereGeometry args={[0.1, 8, 8]} />
-            <meshStandardMaterial color="#6ee7b7" emissive="#10b981" emissiveIntensity={1.5} />
+            <meshToonMaterial color="#6ee7b7" emissive="#10b981" emissiveIntensity={1.5} />
           </mesh>
         </group>
       )}

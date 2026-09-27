@@ -56,7 +56,7 @@ function VillageHouse({
       {/* Entrance access path (ground-level, no collision) */}
       <mesh position={[0, 0.011, D / 2 + 0.9]} rotation={[-Math.PI / 2, 0, 0]} receiveShadow>
         <planeGeometry args={[1.4 * scale, 1.8 * scale]} />
-        <meshStandardMaterial color="#a3a37a" roughness={1} />
+        <meshToonMaterial color="#a3a37a" />
       </mesh>
       {/* Four walls — front wall built from segments so the door opening is real */}
       <RigidBody type="fixed" colliders={false}>
@@ -71,37 +71,37 @@ function VillageHouse({
       <group>
         <mesh position={[0, H / 2, -D / 2]} castShadow receiveShadow>
           <boxGeometry args={[W, H, T]} />
-          <meshStandardMaterial color={wallColor} roughness={0.9} />
+          <meshToonMaterial color={wallColor} />
         </mesh>
         <mesh position={[-W / 2, H / 2, 0]} castShadow receiveShadow>
           <boxGeometry args={[T, H, D]} />
-          <meshStandardMaterial color={wallColor} roughness={0.9} />
+          <meshToonMaterial color={wallColor} />
         </mesh>
         <mesh position={[W / 2, H / 2, 0]} castShadow receiveShadow>
           <boxGeometry args={[T, H, D]} />
-          <meshStandardMaterial color={wallColor} roughness={0.9} />
+          <meshToonMaterial color={wallColor} />
         </mesh>
         {/* Front wall segments + door header */}
         <mesh position={[-(W / 2 - doorOffset / 2), H / 2, D / 2]} castShadow receiveShadow>
           <boxGeometry args={[doorOffset, H, T]} />
-          <meshStandardMaterial color={wallColor} roughness={0.9} />
+          <meshToonMaterial color={wallColor} />
         </mesh>
         <mesh position={[W / 2 - doorOffset / 2, H / 2, D / 2]} castShadow receiveShadow>
           <boxGeometry args={[doorOffset, H, T]} />
-          <meshStandardMaterial color={wallColor} roughness={0.9} />
+          <meshToonMaterial color={wallColor} />
         </mesh>
         <mesh position={[doorOffset, 1.9 * scale + (H - 1.9 * scale) / 2, D / 2]} castShadow receiveShadow>
           <boxGeometry args={[DOOR_W, H - 1.9 * scale, T]} />
-          <meshStandardMaterial color={wallColor} roughness={0.9} />
+          <meshToonMaterial color={wallColor} />
         </mesh>
         {/* Two windows (front + side), slightly inset frames — separate material */}
         <mesh position={[-W / 4, H * 0.62, D / 2 + 0.01]} castShadow>
           <boxGeometry args={[0.5 * scale, 0.5 * scale, 0.05]} />
-          <meshStandardMaterial color="#1e293b" emissive="#38bdf8" emissiveIntensity={0.35} roughness={0.4} />
+          <meshToonMaterial color="#1e293b" emissive="#38bdf8" emissiveIntensity={0.35} />
         </mesh>
         <mesh position={[W / 2 + 0.01, H * 0.62, -D / 4]} castShadow>
           <boxGeometry args={[0.05, 0.5 * scale, 0.5 * scale]} />
-          <meshStandardMaterial color="#1e293b" emissive="#38bdf8" emissiveIntensity={0.35} roughness={0.4} />
+          <meshToonMaterial color="#1e293b" emissive="#38bdf8" emissiveIntensity={0.35} />
         </mesh>
       </group>
       {/* Separate sloped roof with visible overhang (4-sided pyramid)
@@ -109,7 +109,7 @@ function VillageHouse({
       <group>
         <mesh position={[0, H + 0.55 * scale, 0]} rotation={[0, Math.PI / 4, 0]} castShadow>
           <coneGeometry args={[W * 0.95, 1.1 * scale, 4]} />
-          <meshStandardMaterial color="#7f1d1d" roughness={0.8} />
+          <meshToonMaterial color="#7f1d1d" />
         </mesh>
       </group>
     </group>
@@ -243,11 +243,11 @@ function Tree({ position, scale = 1 }: { position: [number, number, number]; sca
       <group position={position} scale={[scale, scale, scale]}>
         <mesh position={[0, 1.2, 0]} castShadow>
           <coneGeometry args={[0.8, 2.5, 8]} />
-          <meshStandardMaterial color="#166534" />
+          <meshToonMaterial color="#166534" />
         </mesh>
         <mesh position={[0, 0.3, 0]} castShadow>
           <cylinderGeometry args={[0.15, 0.2, 0.6, 6]} />
-          <meshStandardMaterial color="#78350f" />
+          <meshToonMaterial color="#78350f" />
         </mesh>
       </group>
     </RigidBody>
@@ -260,7 +260,7 @@ function Rock({ position, scale = 1 }: { position: [number, number, number]; sca
     <RigidBody type="fixed">
       <mesh position={position} castShadow scale={[scale, scale, scale]}>
         <dodecahedronGeometry args={[0.6, 0]} />
-        <meshStandardMaterial color="#6b7280" roughness={0.9} />
+        <meshToonMaterial color="#6b7280" />
       </mesh>
     </RigidBody>
   );
@@ -273,15 +273,15 @@ function DeadTree({ position }: { position: [number, number, number] }) {
       <group position={position}>
         <mesh position={[0, 0.8, 0]} rotation={[0, 0, 0.15]} castShadow>
           <cylinderGeometry args={[0.08, 0.15, 1.6, 6]} />
-          <meshStandardMaterial color="#451a03" />
+          <meshToonMaterial color="#451a03" />
         </mesh>
         <mesh position={[0.3, 1.2, 0]} rotation={[0, 0, -0.4]} castShadow>
           <cylinderGeometry args={[0.04, 0.06, 0.8, 5]} />
-          <meshStandardMaterial color="#451a03" />
+          <meshToonMaterial color="#451a03" />
         </mesh>
         <mesh position={[-0.2, 1.4, 0.1]} rotation={[0, 0, 0.3]} castShadow>
           <cylinderGeometry args={[0.03, 0.05, 0.6, 5]} />
-          <meshStandardMaterial color="#451a03" />
+          <meshToonMaterial color="#451a03" />
         </mesh>
       </group>
     </RigidBody>
@@ -1388,17 +1388,17 @@ export default function GameScene() {
                 <group>
                   <mesh position={[0, 2.5, 0]} castShadow>
                     <boxGeometry args={[2.5, 0.15, 2]} />
-                    <meshStandardMaterial color="#78350f" />
+                    <meshToonMaterial color="#78350f" />
                   </mesh>
                   {[[-1.1, 1.3, 0.8],[1.1, 1.3, 0.8],[-1.1, 1.3, -0.8],[1.1, 1.3, -0.8]].map(([x,y,z],i) => (
                     <mesh key={i} position={[x,y,z]} castShadow>
                       <cylinderGeometry args={[0.04, 0.04, 2.5, 8]} />
-                      <meshStandardMaterial color="#92400e" />
+                      <meshToonMaterial color="#92400e" />
                     </mesh>
                   ))}
                   <mesh position={[0, 0.5, 1]} castShadow>
                     <boxGeometry args={[2.5, 0.8, 0.3]} />
-                    <meshStandardMaterial color="#78350f" />
+                    <meshToonMaterial color="#78350f" />
                   </mesh>
                 </group>
               </RigidBody>
@@ -1408,15 +1408,15 @@ export default function GameScene() {
                 <group>
                   <mesh position={[0, 0.4, 0]} castShadow>
                     <boxGeometry args={[0.5, 0.4, 0.4]} />
-                    <meshStandardMaterial color="#475569" metalness={0.8} />
+                    <meshToonMaterial color="#475569" />
                   </mesh>
                   <mesh position={[0.8, 0.3, 0.5]} castShadow>
                     <boxGeometry args={[0.6, 0.5, 0.6]} />
-                    <meshStandardMaterial color="#334155" />
+                    <meshToonMaterial color="#334155" />
                   </mesh>
                   <mesh position={[0.8, 0.6, 0.5]}>
                     <sphereGeometry args={[0.2, 8, 8]} />
-                    <meshStandardMaterial color="#ef4444" emissive="#ef4444" emissiveIntensity={2} />
+                    <meshToonMaterial color="#ef4444" emissive="#ef4444" emissiveIntensity={2} />
                   </mesh>
                 </group>
               </RigidBody>
@@ -1426,11 +1426,11 @@ export default function GameScene() {
                 <group>
                   <mesh position={[0, 0.8, 0]} castShadow>
                     <boxGeometry args={[0.6, 1.6, 0.6]} />
-                    <meshStandardMaterial color="#1e3a8a" />
+                    <meshToonMaterial color="#1e3a8a" />
                   </mesh>
                   <mesh position={[0, 1.7, 0]} castShadow>
                     <boxGeometry args={[0.8, 0.1, 0.8]} />
-                    <meshStandardMaterial color="#1e40af" />
+                    <meshToonMaterial color="#1e40af" />
                   </mesh>
                 </group>
               </RigidBody>
@@ -1440,19 +1440,19 @@ export default function GameScene() {
                 <group>
                   <mesh position={[0, 1.2, 0]} castShadow>
                     <boxGeometry args={[1.8, 1.8, 1.8]} />
-                    <meshStandardMaterial color="#065f46" />
+                    <meshToonMaterial color="#065f46" />
                   </mesh>
                   <mesh position={[0, 2.3, 0]} castShadow>
                     <coneGeometry args={[1.4, 1, 4]} />
-                    <meshStandardMaterial color="#047857" />
+                    <meshToonMaterial color="#047857" />
                   </mesh>
                   <mesh position={[0, 1.8, 0.91]}>
                     <boxGeometry args={[0.3, 0.1, 0.02]} />
-                    <meshStandardMaterial color="#d1fae5" emissive="#10b981" emissiveIntensity={1} />
+                    <meshToonMaterial color="#d1fae5" emissive="#10b981" emissiveIntensity={1} />
                   </mesh>
                   <mesh position={[0, 1.8, 0.91]}>
                     <boxGeometry args={[0.1, 0.3, 0.02]} />
-                    <meshStandardMaterial color="#d1fae5" emissive="#10b981" emissiveIntensity={1} />
+                    <meshToonMaterial color="#d1fae5" emissive="#10b981" emissiveIntensity={1} />
                   </mesh>
                 </group>
               </RigidBody>
@@ -1474,17 +1474,17 @@ export default function GameScene() {
                   {[0, 0.8, 1.6, 2.4, 3.2, 4.0, 4.8, 5.6].map((angle, i) => (
                     <mesh key={i} position={[Math.cos(angle) * 0.4, 0.1, Math.sin(angle) * 0.4]} castShadow>
                       <sphereGeometry args={[0.12, 6, 6]} />
-                      <meshStandardMaterial color="#6b7280" />
+                      <meshToonMaterial color="#6b7280" />
                     </mesh>
                   ))}
                   {/* Fire glow */}
                   <mesh position={[0, 0.3, 0]}>
                     <sphereGeometry args={[0.25, 8, 8]} />
-                    <meshStandardMaterial color="#f97316" emissive="#f97316" emissiveIntensity={3} transparent opacity={0.8} />
+                    <meshToonMaterial color="#f97316" emissive="#f97316" emissiveIntensity={3} transparent opacity={0.8} />
                   </mesh>
                   <mesh position={[0, 0.5, 0]}>
                     <coneGeometry args={[0.15, 0.4, 6]} />
-                    <meshStandardMaterial color="#ef4444" emissive="#ef4444" emissiveIntensity={2} transparent opacity={0.7} />
+                    <meshToonMaterial color="#ef4444" emissive="#ef4444" emissiveIntensity={2} transparent opacity={0.7} />
                   </mesh>
                 </group>
               </RigidBody>
@@ -1500,7 +1500,7 @@ export default function GameScene() {
                 <RigidBody key={`path-${i}`} type="fixed">
                   <mesh position={[x, 0.01, z]} rotation={[-Math.PI / 2, 0, 0]} receiveShadow>
                     <planeGeometry args={[3, 4]} />
-                    <meshStandardMaterial color="#a3a37a" roughness={1} />
+                    <meshToonMaterial color="#a3a37a" />
                   </mesh>
                 </RigidBody>
               ))}
@@ -1583,7 +1583,7 @@ export default function GameScene() {
               <RigidBody type="fixed" position={[-7, 0, -32]}>
                 <mesh castShadow position={[0, 0.3, 0]}>
                   <boxGeometry args={[1.5, 0.6, 1]} />
-                  <meshStandardMaterial color="#78350f" />
+                  <meshToonMaterial color="#78350f" />
                 </mesh>
               </RigidBody>
               <Rock position={[-5, 0, -30]} scale={0.5} />
@@ -1606,7 +1606,7 @@ export default function GameScene() {
               <RigidBody type="fixed">
                 <mesh position={[8, 0.8, -35]} castShadow>
                   <octahedronGeometry args={[0.4, 0]} />
-                  <meshStandardMaterial color="#a855f7" emissive="#7c3aed" emissiveIntensity={2} transparent opacity={0.8} />
+                  <meshToonMaterial color="#a855f7" emissive="#7c3aed" emissiveIntensity={2} transparent opacity={0.8} />
                 </mesh>
               </RigidBody>
 
@@ -1648,7 +1648,7 @@ export default function GameScene() {
                 <CuboidCollider args={[50, 0.5, 50]} position={[0, -0.5, 0]} />
                 <mesh position={[0, -0.5, 0]} receiveShadow>
                   <boxGeometry args={[100, 1, 100]} />
-                  <meshStandardMaterial color="#4ade80" />
+                  <meshToonMaterial color="#4ade80" />
                 </mesh>
               </RigidBody>
 
@@ -1656,25 +1656,25 @@ export default function GameScene() {
               <RigidBody type="fixed" position={[0, 0, -50]}>
                 <mesh receiveShadow>
                   <boxGeometry args={[100, 10, 1]} />
-                  <meshStandardMaterial color="#1e293b" />
+                  <meshToonMaterial color="#1e293b" />
                 </mesh>
               </RigidBody>
               <RigidBody type="fixed" position={[0, 0, 50]}>
                 <mesh receiveShadow>
                   <boxGeometry args={[100, 10, 1]} />
-                  <meshStandardMaterial color="#1e293b" />
+                  <meshToonMaterial color="#1e293b" />
                 </mesh>
               </RigidBody>
               <RigidBody type="fixed" position={[-50, 0, 0]}>
                 <mesh receiveShadow>
                   <boxGeometry args={[1, 10, 100]} />
-                  <meshStandardMaterial color="#1e293b" />
+                  <meshToonMaterial color="#1e293b" />
                 </mesh>
               </RigidBody>
               <RigidBody type="fixed" position={[50, 0, 0]}>
                 <mesh receiveShadow>
                   <boxGeometry args={[1, 10, 100]} />
-                  <meshStandardMaterial color="#1e293b" />
+                  <meshToonMaterial color="#1e293b" />
                 </mesh>
               </RigidBody>
 
@@ -1689,7 +1689,7 @@ export default function GameScene() {
                   </RigidBody>
                   <mesh position={[40, 0.01, 40]} rotation={[-Math.PI / 2, 0, 0]} receiveShadow>
                     <planeGeometry args={[8, 8]} />
-                    <meshStandardMaterial color="#8a6b4a" roughness={1} />
+                    <meshToonMaterial color="#8a6b4a" />
                   </mesh>
                   {([
                     [[40, 2, 36.05], [8, 4, 0.1]],
@@ -1699,7 +1699,7 @@ export default function GameScene() {
                     <RigidBody key={`hwall-${i}`} type="fixed">
                       <mesh position={pos as unknown as [number, number, number]} castShadow receiveShadow>
                         <boxGeometry args={size as unknown as [number, number, number]} />
-                        <meshStandardMaterial color="#a16207" />
+                        <meshToonMaterial color="#a16207" />
                       </mesh>
                     </RigidBody>
                   ))}
@@ -1707,7 +1707,7 @@ export default function GameScene() {
                   <RigidBody type="fixed">
                     <mesh position={[38, 2, 43.9]} castShadow receiveShadow>
                       <boxGeometry args={[4, 4, 0.1]} />
-                      <meshStandardMaterial color="#a16207" />
+                      <meshToonMaterial color="#a16207" />
                     </mesh>
                   </RigidBody>
                   <ExitDoorZone exitPos={[42, 0, 43.4]} />
@@ -1715,13 +1715,13 @@ export default function GameScene() {
                       collider needed — the player cannot jump out of bounds. */}
                   <mesh position={[40, 4.05, 40]} rotation={[Math.PI / 2, 0, 0]} receiveShadow>
                     <planeGeometry args={[8, 8]} />
-                    <meshStandardMaterial color="#5a3d22" roughness={1} side={THREE.DoubleSide} />
+                    <meshToonMaterial color="#5a3d22" side={THREE.DoubleSide} />
                   </mesh>
                   {/* Interior light source (P2.2) */}
                   <pointLight position={[40, 3.4, 40]} intensity={18} distance={12} color="#ffd9a0" castShadow={false} />
                   <mesh position={[40, 3.7, 40]}>
                     <sphereGeometry args={[0.12, 8, 8]} />
-                    <meshStandardMaterial color="#ffe9c4" emissive="#ffd9a0" emissiveIntensity={2} />
+                    <meshToonMaterial color="#ffe9c4" emissive="#ffd9a0" emissiveIntensity={2} />
                   </mesh>
                   {/* Functional-looking static props (P2.2): bed, table, chair,
                       storage chest — grouped geometry, low-spec primitives. */}
@@ -1730,15 +1730,15 @@ export default function GameScene() {
                     <group position={[36.8, 0, 37.6]}>
                       <mesh position={[0, 0.25, 0]} castShadow receiveShadow>
                         <boxGeometry args={[1.1, 0.5, 2.2]} />
-                        <meshStandardMaterial color="#5a3d22" />
+                        <meshToonMaterial color="#5a3d22" />
                       </mesh>
                       <mesh position={[0, 0.58, 0.1]} castShadow>
                         <boxGeometry args={[1, 0.16, 2]} />
-                        <meshStandardMaterial color="#9ca3af" />
+                        <meshToonMaterial color="#9ca3af" />
                       </mesh>
                       <mesh position={[0, 0.7, -0.75]} castShadow>
                         <boxGeometry args={[0.7, 0.14, 0.4]} />
-                        <meshStandardMaterial color="#e5e7eb" />
+                        <meshToonMaterial color="#e5e7eb" />
                       </mesh>
                     </group>
                   </RigidBody>
@@ -1747,12 +1747,12 @@ export default function GameScene() {
                     <group position={[41.8, 0, 38.2]}>
                       <mesh position={[0, 0.72, 0]} castShadow receiveShadow>
                         <boxGeometry args={[1.3, 0.08, 0.8]} />
-                        <meshStandardMaterial color="#6b4a2a" />
+                        <meshToonMaterial color="#6b4a2a" />
                       </mesh>
                       {[[-0.55, -0.3], [0.55, -0.3], [-0.55, 0.3], [0.55, 0.3]].map(([lx, lz], i) => (
                         <mesh key={i} position={[lx, 0.36, lz]} castShadow>
                           <boxGeometry args={[0.08, 0.72, 0.08]} />
-                          <meshStandardMaterial color="#5a3d22" />
+                          <meshToonMaterial color="#5a3d22" />
                         </mesh>
                       ))}
                     </group>
@@ -1762,16 +1762,16 @@ export default function GameScene() {
                     <group position={[41.2, 0, 39.3]} rotation={[0, -0.6, 0]}>
                       <mesh position={[0, 0.45, 0]} castShadow>
                         <boxGeometry args={[0.45, 0.06, 0.45]} />
-                        <meshStandardMaterial color="#7c5a33" />
+                        <meshToonMaterial color="#7c5a33" />
                       </mesh>
                       <mesh position={[0, 0.75, -0.2]} castShadow>
                         <boxGeometry args={[0.45, 0.55, 0.06]} />
-                        <meshStandardMaterial color="#7c5a33" />
+                        <meshToonMaterial color="#7c5a33" />
                       </mesh>
                       {[[-0.18, -0.18], [0.18, -0.18], [-0.18, 0.18], [0.18, 0.18]].map(([lx, lz], i) => (
                         <mesh key={i} position={[lx, 0.22, lz]} castShadow>
                           <boxGeometry args={[0.06, 0.45, 0.06]} />
-                          <meshStandardMaterial color="#5a3d22" />
+                          <meshToonMaterial color="#5a3d22" />
                         </mesh>
                       ))}
                     </group>
@@ -1781,15 +1781,15 @@ export default function GameScene() {
                     <group position={[43.2, 0, 37.2]}>
                       <mesh position={[0, 0.35, 0]} castShadow receiveShadow>
                         <boxGeometry args={[0.9, 0.7, 0.6]} />
-                        <meshStandardMaterial color="#4a3220" />
+                        <meshToonMaterial color="#4a3220" />
                       </mesh>
                       <mesh position={[0, 0.73, 0]} castShadow>
                         <boxGeometry args={[0.95, 0.1, 0.65]} />
-                        <meshStandardMaterial color="#3b2718" />
+                        <meshToonMaterial color="#3b2718" />
                       </mesh>
                       <mesh position={[0, 0.55, 0.32]}>
                         <boxGeometry args={[0.1, 0.14, 0.04]} />
-                        <meshStandardMaterial color="#d68a31" metalness={0.6} roughness={0.4} />
+                        <meshToonMaterial color="#d68a31" />
                       </mesh>
                     </group>
                   </RigidBody>
