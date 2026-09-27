@@ -98,7 +98,7 @@ function CharacterPreview() {
   const metal = { color: armourColor } as const;
 
   return (
-    <div className="relative h-[90px] w-[90px] sm:h-[100px] sm:w-[100px] shrink-0 pointer-events-none select-none rounded-lg border border-gray-800 bg-gray-950/90 overflow-hidden">
+    <div className="relative h-[64px] w-[64px] sm:h-[72px] sm:w-[72px] shrink-0 pointer-events-none select-none rounded-lg border border-gray-800 bg-gray-950/90 overflow-hidden">
       <span className="absolute top-1.5 left-2 text-[9px] font-bold uppercase tracking-wider text-gray-500 z-10">
         {chestDef ? chestDef.name : 'No Armour'}
       </span>
@@ -292,6 +292,7 @@ function InventoryItemSlot(props: {
 export default function InventoryModal() {
   const { ui, setShowInventory, player, setInventory, useConsumableItem } = useGameStore();
   const equipWeapon = useGameStore((s) => s.equipWeapon);
+  const unequipSlot = useGameStore((s) => s.unequipSlot);
 
   const [draggedSlot, setDraggedSlot] = useState<{ cat: ItemType; index: number } | null>(null);
   const [dropTarget, setDropTarget] = useState<{ cat: ItemType; index: number } | null>(null);
@@ -509,7 +510,7 @@ export default function InventoryModal() {
 
   return (
     <div
-      className={`absolute inset-0 z-40 flex items-center justify-center bg-black backdrop-blur-sm p-2 sm:p-4 transition-opacity duration-200 ${
+      className={`absolute inset-0 z-40 flex items-center justify-center bg-black/60 backdrop-blur-md p-2 sm:p-4 transition-opacity duration-200 ${
         closing ? 'opacity-0' : 'opacity-100'
       }`}
       onPointerDown={(e) => {
@@ -517,7 +518,7 @@ export default function InventoryModal() {
       }}
     >
       <div
-        className={`bg-gray-900 border border-gray-700 rounded-xl w-full max-w-4xl shadow-2xl overflow-hidden max-h-[92vh] transition-all duration-200 flex flex-col ${
+        className={`bg-gray-900 border border-gray-700 rounded-xl w-[50vw] h-[70vh] shadow-2xl overflow-hidden transition-all duration-200 flex flex-col ${
           closing ? 'scale-95 opacity-0' : 'scale-100 opacity-100'
         }`}
       >
@@ -577,7 +578,7 @@ export default function InventoryModal() {
         {/* ── Upper equipment region (M1W2D6 #5) ──────────────────────
             Left: SMALL player preview + the four armour slots beneath it.
             Right of the preview: intentionally EMPTY reserved area. */}
-        <div className="shrink-0 border-b border-gray-800 bg-gray-950/60 flex items-start gap-3 p-3">
+        <div className="shrink-0 border-b border-gray-800 bg-gray-950/60 flex items-start gap-3 p-2">
           <div className="flex flex-col items-center gap-2 shrink-0">
             <CharacterPreview />
             {/* Four independent armour slots — each bound to its own
@@ -594,7 +595,7 @@ export default function InventoryModal() {
                     key={slotKey}
                     title={slotDef ? `${slotLabel}: ${slotDef.name}` : `Empty ${slotLabel} slot`}
                     onClick={() => { if (slotDef) equipWeapon(slotId as string); }}
-                    className={`w-14 h-14 rounded border-2 flex flex-col items-center justify-center cursor-pointer ${
+                    className={`relative w-14 h-14 rounded border-2 flex flex-col items-center justify-center cursor-pointer ${
                       slotDef ? 'border-amber-600/70 bg-amber-900/20' : 'border-gray-700 bg-black/40 border-dashed'
                     }`}
                   >
@@ -607,6 +608,16 @@ export default function InventoryModal() {
                       <span className="text-[7px] text-gray-400 uppercase truncate w-full text-center px-0.5">
                         {slotLabel}
                       </span>
+                    )}
+                    {slotDef && (
+                      <button
+                        type="button"
+                        onClick={(e) => { e.stopPropagation(); unequipSlot(slotKey); }}
+                        title={`Unequip ${slotLabel}`}
+                        className="absolute -top-1.5 -right-1.5 w-4 h-4 flex items-center justify-center rounded-full bg-gray-900 border border-gray-600 text-gray-300 text-[10px] leading-none hover:text-red-400 hover:border-red-500"
+                      >
+                        ×
+                      </button>
                     )}
                   </div>
                 );
@@ -623,7 +634,7 @@ export default function InventoryModal() {
             is not a flex child of the content row and item scrolling can never
             move it. Tree: All | Fighting (Core/Melee/Ranged/Armour) | Item |
             Healing — no Food. */}
-        <div className="relative flex flex-1 min-h-0 [@media(min-height:760px)]:min-h-[26rem]">
+        <div className="relative flex flex-1 min-h-0">
           {/* Floating category nav: anchored to the modal's left padding edge,
               outside the item-grid scroll region, visible by default. */}
           <nav className="absolute left-3 sm:left-4 top-2 bottom-2 z-20 w-24 sm:w-32 flex flex-col gap-1.5 p-2 overflow-y-auto rounded-lg border border-gray-800 bg-gray-950/95 shadow-xl">

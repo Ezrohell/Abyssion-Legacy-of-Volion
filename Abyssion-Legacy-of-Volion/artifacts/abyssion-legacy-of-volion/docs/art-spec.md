@@ -19,13 +19,13 @@ lens whose concrete atmosphere anchors are **Signalis**, **Darkwood**,
 dither instead of smooth gradients, fog as the primary depth cue, and horror
 imagery held in a narrow desaturated range rather than in saturation. The
 pixelation is not decoration — it is the performance strategy: every surface is
-shaded with 3 flat cel bands, every texture is 96×96 px, and the whole scene is
+shaded with 3 flat cel bands, every texture is 128×128 px, and the whole scene is
 rasterised into a half-resolution buffer, so the game holds its frame budget on
 low-end hardware (Helio G70-class, Mali-G52 MC2) instead of buying detail it
 cannot afford. **The style is uniform across the entire game**: the world,
 characters, NPCs, enemies, weapons, wildlife, VFX, HUD, menus, and cutscene
 presentation all use the same shader model (§2), the same outline rule (§3), the
-same 96×96 px texture cap (§4), and the same 16-colour palette (§5). There is no
+same 128×128 px texture cap (§4), and the same 16-colour palette (§5). There is no
 "combat style", no "menu style", and no per-zone art variant. One build, one
 look, every device.
 
@@ -106,7 +106,7 @@ hull extrusion is applied in buffer space as `t_vpx * internalScale` and is
 never thinner than **1 buffer pixel** (a sub-pixel line aliases and would break
 the uniform-thickness lock). At 1080p that is exactly 1 buffer px = 2 display px.
 
-**Colour.** A fixed dark tone: **`#1A1410`**. Not pure black (`#000000`), not
+**Colour.** A fixed dark tone: **`#1f1f1f`**. Not pure black (`#000000`), not
 `#111111`, not a per-object tint. `MeshBasicMaterial`, `toneMapped: false`,
 `fog: false`.
 
@@ -116,10 +116,13 @@ per-vertex thickness. This is a stylistic lock taken from the reference games
 (Signalis, Hyper Light Drifter): the outline reads as a drawn line, not as a
 fresnel falloff.
 
-**Applied to.** Every **character** (player, all NPCs, all enemies) and every
-**weapon** (sword, dagger, M1887, crossbow, water staff, resonance core).
-**Not applied to** environment props, trees, rocks, houses, ground, the arena
-geometry, wildlife, VFX meshes, or the fogged distance.
+**Applied to.** **Every mesh in the scene**, not a subset. v1 scoped the outline
+to a subset of lit meshes; v2 widens it to match the **F8a
+implementation**: every non-`ShaderMaterial` mesh is outlined — the player, all
+NPCs, all enemies, all weapons (sword, dagger, M1887, crossbow, water staff,
+resonance core), and every environment surface: terrain, props, trees, rocks,
+houses, buildings, the arena geometry, wildlife, and VFX meshes. **Not applied
+to** the §2 custom `ShaderMaterial` accent surfaces or the fogged distance.
 
 **Implementation — three candidate approaches, one chosen:**
 
@@ -135,18 +138,18 @@ geometry, wildlife, VFX meshes, or the fogged distance.
 1. Thickness is authored in **buffer** pixels, so the 1 buffer px extrusion
    upscales to exactly 2 display px at 1080p with no anti-aliased edge. `OutlinePass`
    authors thickness in viewport pixels and would produce a smooth line that the
-   pixelate stage then has to re-quantise.
-2. Selection is **per-object**, so "characters and weapons only" is structural.
-   B and C are screen-space and would need an explicit mask to exclude props,
-   ground, and the fogged distance.
+   half-resolution stage then has to re-quantise.
+2. Selection is **per-object and uniform**: the hull is attached to every shaded
+   mesh, so the widened §3 scope is structural. B and C are screen-space and
+   would apply their edge to the whole frame without this per-object control.
 3. Cost is **one extra draw call per outlined object** and no additional render
    target, which fits the ≤ 2 ms outline budget in §10. B requires
    `EffectComposer` plus a second full render of the selected objects; C requires
    a depth+normal prepass at buffer resolution.
-4. It needs no post-processing dependency, so §6's two-effect lock cannot be
-   broken by an outline library.
+4. It needs no post-processing dependency, so the outline is independent of the
+   §6 effect stack.
 
-**Hull material spec.** `MeshBasicMaterial`, `color: #1A1410`,
+**Hull material spec.** `MeshBasicMaterial`, `color: #1f1f1f`,
 `side: THREE.BackSide`, `fog: false`, `toneMapped: false`, `depthWrite: true`.
 Vertex offset: `position += normalize(normal) * t_bufferPx * (2.0 / bufferHeight) * clipW`,
 which keeps the extrusion constant in screen space regardless of depth.
@@ -155,21 +158,21 @@ which keeps the extrusion constant in screen space regardless of depth.
 
 ## §4 Texture resolution
 
-**Every texture in the game is 96×96 px.** This is a hard cap, not a target.
+**Every texture in the game is 128×128 px.** This is a hard cap, not a target.
 
 | asset class | size |
 | --- | --- |
-| tiled material (ground, walls, bark, rock, cloth) | 96×96 px |
-| atlas | 96×96 px **per tile slot** |
-| UI icon | 96×96 px (scaled down to display size) |
-| character skin / clothing | 96×96 px **per body part** |
-| sky gradient | 96×96 px |
+| tiled material (ground, walls, bark, rock, cloth) | 128×128 px |
+| atlas | 128×128 px **per tile slot** |
+| UI icon | 128×128 px (scaled down to display size) |
+| character skin / clothing | 128×128 px **per body part** |
+| sky gradient | 128×128 px |
 | star field (night sky) | 96×96 px |
 | toon gradient map (§2) | 3×1 px |
 
-**Hard cap, not a target.** Devices never load an asset larger than 96×96 px.
+**Hard cap, not a target.** Devices never load an asset larger than 128×128 px.
 There is no 192×192 "hero" exception, no 512×512 sky, and no 256×256 atlas. A
-future session that needs more detail adds more 96×96 tiles; it does not raise
+future session that needs more detail adds more 128×128 tiles; it does not raise
 the number.
 
 **Filtering.** `THREE.NearestFilter` on **every** texture's `magFilter` and
@@ -190,7 +193,7 @@ atlases, icons, the sky gradient, and the star field. Never `MirroredRepeatWrapp
 (linear) for masks, the star-field alpha, and the §2 gradient map.
 
 **Current state.** The tree holds **0 textures** on 3D meshes today — every
-material is a flat colour. The first implementation session authors the 96×96 px
+material is a flat colour. The first implementation session authors the 128×128 px
 set from scratch under this cap.
 
 ---
@@ -230,7 +233,7 @@ this table.
 - The **universal 4** (`U1` skin, `U2` blood, `U3` UI, `U4` neutral) may appear in
   every zone.
 
-**The outline colour `#1A1410` (§3) is not a palette slot.** It is exempt and is
+**The outline colour `#1f1f1f` (§3) is not a palette slot.** It is exempt and is
 the only near-black in the game.
 
 **Saturation rule.** Every colour in the table satisfies **S ≤ 0.65 in HSV** and
@@ -249,13 +252,17 @@ colour proposed for any purpose must satisfy both before it is used.
   a hue shift. No material may tint its own shadow band; shadow hue must equal
   base hue for every surface.
 
+**Zone accents.** The zone accent palette is **not locked**; it will be **set in a
+dedicated session**. The 16-slot table above is unchanged.
+
 ---
 
 ## §6 Post-processing
 
-Exactly **two** effects, in this order. No third effect is authorized.
+This section is the exhaustive white list. Any effect not named below is
+forbidden. The stack is applied in the fixed order given here.
 
-**a. Dither / pixelate.**
+**a. Base rasterisation — the pixelated reading.**
 
 - The scene renders into a render target at **`internalScale = min(0.5, 1280 / viewportWidth)`**
   of the viewport — a half-resolution buffer, hard-capped at 1280 px wide.
@@ -266,37 +273,58 @@ Exactly **two** effects, in this order. No third effect is authorized.
 - The renderer pixel ratio is **1** (`setPixelRatio(1)`). The upscale, not the
   device pixel ratio, is what makes the image pixelated.
 
-**b. Bloom.**
+**b. `PixelationEffect` is removed.** v1 required a `PixelationEffect` granularity
+pass. v2 drops it. The half-resolution buffer in (a) is the primary pixelated
+reading; there is no screen-space pixelation pass. When the per-material
+**128×128 px** textures of §4 exist, the pixelated reading comes from the texture
+filter (**`NearestFilter`**), not from a screen-space effect.
 
-- Threshold **0.85**, intensity **0.3**, radius **0.6**.
-- **Applied after the pixelate stage**, so the glow is quantised to the same
-  pixels as everything else. This is deliberate and is the stylistic lock: the
-  game reads as a **horror film with an analogue glow**, not as an anime bloom
-  pass. Bloom must never be inserted before the pixelate stage.
-- Implementation is the cheap `UnrealBloomPass` equivalent with a capped radius:
-  a 4-level mip chain starting at **0.25× viewport**, radius clamped at 0.6,
-  intensity 0.3, threshold 0.85.
+**c. Allowed effect white list.** Exactly these effects are authorized:
+
+| effect | parameters |
+| --- | --- |
+| **Bloom** | threshold **0.85**, intensity **0.3**, radius **0.6** |
+| **Outline** | per §3 — 2 px @ 1080p, colour `#1f1f1f` |
+| **Vignette** | subtle |
+| **HueSaturation** | desaturate |
+| **Noise** | very subtle, opacity **≈ 0.08** |
+| **ChromaticAberration** | subtle |
+| **FilmEffect** | subtle |
+| **Scanline** | subtle |
+
+Bloom is applied **after** the base rasterisation stage in (a), so the glow is
+quantised to the same pixels as everything else. This is deliberate and is the
+stylistic lock: the game reads as a **horror film with an analogue glow**, not as
+an anime bloom pass. Bloom must never be inserted before (a). Bloom
+implementation is the cheap `UnrealBloomPass` equivalent with a capped radius: a
+4-level mip chain starting at **0.25× viewport**, radius clamped at 0.6,
+intensity 0.3, threshold 0.85.
+
+Every effect in the white list is scaled by the **zone post-process intensity** in
+§7: Village Haven runs the stack at **0.3×**, Dangerous Territory and the unnamed
+wilderness at **1.0×**. The unnamed wilderness additionally applies a **darkness
+boost** on top of the 1.0× stack.
 
 **Forbidden post-process effects — each is banned by name** so no future session
-adds one: **chromatic aberration**, **vignette**, **film grain**, **motion
-blur**, **SSAO / ambient occlusion**, **depth of field**, **temporal
-anti-aliasing (TAA)**, **FXAA / SMAA**, **colour grading / LUTs**, **god rays**,
-and **any other `EffectComposer` pass not listed in (a) or (b)**. Anti-aliasing
-is explicitly banned in every form: it smooths exactly the edges the style is
-built on.
+adds one: **SSAO / ambient occlusion**, **depth of field**, **motion blur**, **god
+rays**, **glitch**, **LUT3D / 3D LUTs**, and **any tone-mapping effect beyond what
+three already applies**. Anti-aliasing is banned in every form (FXAA, SMAA, TAA,
+MSAA): it smooths exactly the edges the style is built on.
 
 **Library intent (not installed in this session).** The implementation session
 adopts **`postprocessing`** with the **`@react-three/postprocessing`** React
 binding: it provides the half-resolution render target, a `BloomEffect` with
-exact threshold/intensity/radius parameters, and a custom `Effect` for the Bayer
-upscale in one pipeline. Fallback if that is rejected: **three's built-in
+exact threshold/intensity/radius parameters, and the wider white-list effect set
+(vignette, hue/saturation, noise, chromatic aberration, film, scanline) in one
+pipeline. Fallback if that is rejected: **three's built-in
 `examples/jsm/postprocessing`** (`EffectComposer`, `RenderPass`, `ShaderPass`,
 `UnrealBloomPass`) driven from a `useFrame`-free `useEffect` setup. No package is
 installed by this spec session.
 
-**Performance.** Pixelate is performance-positive (it renders at ≤ 0.5×). Bloom is
-the only added full-screen cost and is capped by the 0.25× mip start and the 0.6
-radius. Together they must fit §10's ≤ 2 ms bloom line.
+**Performance.** The half-resolution rasterisation is performance-positive (it
+renders at ≤ 0.5×). Bloom remains the largest single added full-screen cost and is
+capped by the 0.25× mip start and the 0.6 radius; every other white-list effect is
+single-pass and subtle. Bloom must fit §10's ≤ 2 ms bloom line.
 
 ---
 
@@ -308,12 +336,17 @@ landmark = `village`, otherwise `wilderness`). This spec adds no second resolver
 and does not invent fog numbers: **every fog value below is E2's existing value,
 unchanged**.
 
-| zone | fog density multiplier | fog colour tint | ambient floor | sun intensity multiplier | palette subset | allowed wildlife mood |
-| --- | --- | --- | --- | --- | --- | --- |
-| **Village Haven** | **0.85** | `#C9A47A` (warm) | **0.10** | **1.00** | warm 6 + universal 4 | warm, alive, small and safe — butterflies, perched birds, ground cats |
-| **Dangerous Territory** | **1.25** | `#4A4A44` (desaturated grey) | **0.10** | **0.85** | cold 6 + universal 4 | sparse, unsettling — crows on the arena walls, thin cats |
-| **Unnamed wilderness** | **1.10** | `#35383A` (cold dark grey) | **0.10** | **0.75** | cold 6 + universal 4 | sparse and wrong — crows, distant movers, rats |
-| **Interior** | **0.00** | none | **0.10** | **0.00** | warm 6 + universal 4 | none |
+| zone | fog density multiplier | fog colour tint | ambient floor | sun intensity multiplier | palette subset | allowed wildlife mood | post-process intensity |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| **Village Haven** | **0.85** | `#C9A47A` (warm) | **0.10** | **1.00** | warm 6 + universal 4 | warm, alive, small and safe — butterflies, perched birds, ground cats | **0.3×** |
+| **Dangerous Territory** | **1.25** | `#4A4A44` (desaturated grey) | **0.10** | **0.85** | cold 6 + universal 4 | sparse, unsettling — crows on the arena walls, thin cats | **1.0×** |
+| **Unnamed wilderness** | **1.10** | `#35383A` (cold dark grey) | **0.10** | **0.75** | cold 6 + universal 4 | sparse and wrong — crows, distant movers, rats | **1.0× + darkness boost** |
+| **Interior** | **0.00** | none | **0.10** | **0.00** | warm 6 + universal 4 | none | **0.00×** |
+
+**Transition.** Zone boundaries are **not a hard switch**. Every value in the
+table above interpolates over a **3-second window** when the player crosses a
+zone boundary: fog, ambient, sun, and the §6 post-process stack all lerp from the
+source zone's value to the destination zone's value across those 3 seconds.
 
 Derivation of each column, from E2 as it stands today:
 
@@ -344,6 +377,10 @@ Derivation of each column, from E2 as it stands today:
 - **Allowed wildlife mood** — the implemented E3b ambient wildlife set, unchanged.
   Wildlife count caps stay as shipped: 13 in Village Haven, 5 in the Dangerous
   Territory rect, 14 in the unnamed wilderness.
+- **Post-process intensity** — the §6 effect stack scaled by zone: Village Haven
+  **0.3×**, Dangerous Territory **1.0×**, unnamed wilderness **1.0× plus a
+  darkness boost**, Interior **0.00×** (no horror stack indoors). This is the only
+  new art column besides the sun multiplier; every fog value remains E2's.
 
 ---
 
@@ -359,16 +396,24 @@ sky follows **E2's `dayProgress`** (the single time-of-day source in
 
 | band | in-game hours | top colour | horizon colour | texture |
 | --- | --- | --- | --- | --- |
-| day | 8–18 | **`#6E88A6`** | **`#A8A08A`** | 96×96 px two-tone vertical gradient |
-| dawn / dusk | 6–8 and 18–20 | **`#5A4A55`** | **`#C9A47A`** | 96×96 px two-tone vertical gradient |
-| night | 20–30 and 0–6 | **`#1A1F2A`** (flat) | **`#1A1F2A`** (flat) | 96×96 px star-field texture, **no gradient** |
+| day | 8–18 | **`#6E88A6`** | **`#A8A08A`** | 128×128 px two-tone vertical gradient |
+| dawn / dusk | 6–8 and 18–20 | **`#5A4A55`** | **`#C9A47A`** | 128×128 px two-tone vertical gradient |
+| night | 20–30 and 0–6 | **`#1A1F2A`** (flat) | **`#1A1F2A`** (flat) | flat `#1A1F2A` today; 96×96 px star texture in M2+ |
 
 **Implementation.** One full-screen sky quad (or skybox face) textured with the
-96×96 px gradient, `NearestFilter`, `ClampToEdgeWrapping`,
+128×128 px gradient, `NearestFilter`, `ClampToEdgeWrapping`,
 `toneMapped: false`, `fog: false`, sampled along the view-relative vertical axis
-so the horizon colour lands exactly at the horizon line. The night star field is
-the same quad with a 96×96 px star texture, `color #1A1F2A` as its base,
-`transparent: true`, `opacity = 1` during the night band and `0` otherwise.
+so the horizon colour lands exactly at the horizon line. The night band is
+currently a flat `#1A1F2A` fill with no star field (see **Night stars** below);
+the M2+ implementation replaces it with the same quad carrying a 96×96 px star
+texture, `color #1A1F2A` as its base, `transparent: true`, `opacity = 1` during
+the night band and `0` otherwise.
+
+**Night stars.** The night band is currently a flat **`#1A1F2A`** fill — there is
+no star field today. **M2+ authors a 96×96 px star texture** (§4) as the permanent
+solution. Between now and then, a **procedural star particle field** may be used
+as a placeholder; particles are **temporary**, and the 96×96 px texture is the
+target.
 
 **Transitions.** Band colours are lerped every frame toward the current band's
 target using an exponential smoother with time constant **τ = 2 s**, so a band
@@ -446,8 +491,8 @@ viewport.** Frame time budget: **16.6 ms**.
 
 - **Draw calls ≤ 120.**
 - **Triangles ≤ 150 k.**
-- **Texture memory ≤ 24 MB** resident. At 96×96 px RGBA8 = 36,864 B per texture
-  (`generateMipmaps = false` for tiled), that is **≤ 680 distinct 96×96 textures**.
+- **Texture memory ≤ 24 MB** resident. At 128×128 px RGBA8 = 65,536 B per texture
+  (`generateMipmaps = false` for tiled), that is **≤ 384 distinct 128×128 textures**.
   The **1024×1024 shadow map counts against this ceiling at 4.0 MB**.
 - **Shadow map: 1024×1024, unchanged from E2** (`shadow-mapSize={[1024, 1024]}`,
   ortho `shadow-camera-left = -20`, `right = 20`, `top = 20`, `bottom = -20`,
@@ -477,13 +522,17 @@ until a future spec session changes this document:
   real photographic source textures, no normal-map detail sculpting.
 - **No real-time global illumination.** No GI probe, no irradiance volume, no
   SSGI, no ray-traced lighting, no dynamic lightmap baking.
-- **No post-process beyond §6.** Two effects only — the half-res pixelate/dither
-  composite and the capped bloom. The §6 forbidden list is absolute.
+- **No post-process beyond §6.** Only the white list in §6 is authorized — the
+  half-res rasterisation composite plus bloom, outline, vignette, hue/saturation,
+  noise, chromatic aberration, film, and scanline. The §6 forbidden list is
+  absolute. **Operator override:** v1 §6 was narrower (two effects only); v2
+  widens it to this white list under the operator's refreshed decision, and that
+  override is acknowledged here.
 - **No per-platform art variants.** One build serves every device. No "low"
   texture tier, no mobile-only material set, no desktop-only post-process chain,
   no quality dropdown that changes the art.
-- **No 4K textures anywhere.** 96×96 px per material is the hard cap (§4); there
+- **No 4K textures anywhere.** 128×128 px per material is the hard cap (§4); there
   is no 4K texture, no 2K texture, and no 192×192 exception.
-- **No runtime texture streaming.** All 96×96 px textures are loaded up front
+- **No runtime texture streaming.** All 128×128 px textures are loaded up front
   with the bundle. No `TextureLoader` at runtime, no progressive/lazy texture
   loading, no per-zone texture swap, no eviction or cache management.

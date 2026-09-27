@@ -174,7 +174,11 @@ export type HudElementId =
   | 'settingsBtn'
   | 'minimap'
   | 'topCenterControls'
-  | 'skillBar'
+  | 'skillZ'
+  | 'skillX'
+  | 'skillC'
+  | 'skillV'
+  | 'skillF'
   | 'mobileSkillButtons'
   | 'desktopHotbar';
 
@@ -220,9 +224,15 @@ export const DEFAULT_HUD_LAYOUT: HudLayout = {
   // Top-centre controls: default y mirrors the previous `top: 6px` row — its
   // centre sits ~2% down the viewport at typical heights.
   topCenterControls: { visible: true, position: { x: 0.5,  y: 0.02 }, size: 100, opacity: 100 },
-  // Skill bar: bottom-centre. y 0.80 reproduces the previous bottom-anchored
-  // `clamp(72px, 15dvh + 32px, 280px)` row, expressed as a viewport fraction.
-  skillBar:        { visible: true, position: { x: 0.5,  y: 0.80 }, size: 100, opacity: 100 },
+  // Skill slots (M1W4D1 #5): the old single `skillBar` is split into five
+  // independently editable elements. y 0.80 reproduces the previous
+  // bottom-anchored `clamp(72px, 15dvh + 32px, 280px)` row; x spreads the five
+  // slot centres left-to-right around the old bar centre (0.5) in 0.04 steps.
+  skillZ:          { visible: true, position: { x: 0.42, y: 0.80 }, size: 100, opacity: 100 },
+  skillX:          { visible: true, position: { x: 0.46, y: 0.80 }, size: 100, opacity: 100 },
+  skillC:          { visible: true, position: { x: 0.50, y: 0.80 }, size: 100, opacity: 100 },
+  skillV:          { visible: true, position: { x: 0.54, y: 0.80 }, size: 100, opacity: 100 },
+  skillF:          { visible: true, position: { x: 0.58, y: 0.80 }, size: 100, opacity: 100 },
   // Mobile weapon skill stack: the whole per-weapon button column is ONE
   // element. Defaults reproduce the previous hardcoded
   // `right: 16px; bottom: calc(safe-area-inset-bottom + 150px)` placement on a
@@ -235,7 +245,9 @@ export const DEFAULT_HUD_LAYOUT: HudLayout = {
   mobileSkillButtons: { visible: true, position: { x: 0.966, y: 0.569 }, size: 100, opacity: 100 },
   // Desktop hotbar: reproduces `bottom-4 left-1/2` on a 16:9 viewport — centred
   // horizontally, row box 66px tall, so y = 720 - 16 - 33 = 671 -> 0.932.
-  desktopHotbar:   { visible: true, position: { x: 0.5,  y: 0.932 }, size: 100, opacity: 100 },
+  // M1W4D1 F — raised from 0.932 so the hotbar sits above the mobile control
+  // band (joystick / action buttons / skill row at ~0.80).
+  desktopHotbar:   { visible: true, position: { x: 0.5,  y: 0.78 }, size: 100, opacity: 100 },
   interactPrompt:  { visible: true, position: { x: 0.5,  y: 0.85 }, size: 100, opacity: 100 },
   bossBar:         { visible: true, position: { x: 0.5,  y: 0.88 }, size: 100, opacity: 100 },
   deathOverlay:    { visible: true, position: { x: 0.5,  y: 0.5  }, size: 100, opacity: 100 },
@@ -261,7 +273,11 @@ export const HUD_ELEMENT_LABELS: Record<HudElementId, string> = {
   notifications: 'Notifications',
   interactPrompt: 'Interact Prompt',
   topCenterControls: 'Top Controls',
-  skillBar: 'Skill Bar',
+  skillZ: 'Skill Z',
+  skillX: 'Skill X',
+  skillC: 'Skill C',
+  skillV: 'Skill V',
+  skillF: 'Skill F',
   mobileSkillButtons: 'Mobile Skills',
   desktopHotbar: 'Desktop Hotbar',
   bossBar: 'Boss Bar',
@@ -286,7 +302,7 @@ export const DRAGGABLE_HUD_ELEMENTS: HudElementId[] = [
   'joystick', 'jumpBtn', 'dodgeBtn', 'sprintBtn',
   'backpackBtn', 'settingsBtn', 'minimap',
   'topCenterControls',
-  'skillBar',
+  'skillZ', 'skillX', 'skillC', 'skillV', 'skillF',
   'mobileSkillButtons',
   'desktopHotbar',
 ];
@@ -379,6 +395,26 @@ export function migrateHudLayout(saved: unknown): HudLayout {
     result.quickHeal = { ...clusterConfig, position: { x: 0.24, y: 0.06 } };
     result.comboCounter = { ...clusterConfig, position: { x: 0.5, y: 0.22 } };
     result.combatIndicator = { ...clusterConfig, position: { x: 0.12, y: 0.24 } };
+  }
+
+  // M1W4D1 #5 — the old single `skillBar` splits into five independent slots.
+  // Copy its visibility/size/opacity to all five and spread its centre x into
+  // five 0.04-spaced positions. The `skillBar` key simply drops out, because
+  // `result` only ever contains the current HudElementId keys.
+  const oldSkillBar = savedLayout['skillBar'];
+  if (oldSkillBar) {
+    const bar = extractConfig(oldSkillBar, DEFAULT_HUD_LAYOUT.skillC);
+    const offsets: [HudElementId, number][] = [
+      ['skillZ', -0.08], ['skillX', -0.04], ['skillC', 0], ['skillV', 0.04], ['skillF', 0.08],
+    ];
+    for (const [sid, off] of offsets) {
+      result[sid] = {
+        visible: bar.visible,
+        position: { x: Math.max(0, Math.min(1, bar.position.x + off)), y: bar.position.y },
+        size: bar.size,
+        opacity: bar.opacity,
+      };
+    }
   }
 
   // Migrate each individual element

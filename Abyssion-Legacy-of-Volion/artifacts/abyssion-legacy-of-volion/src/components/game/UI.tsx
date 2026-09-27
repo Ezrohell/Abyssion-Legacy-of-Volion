@@ -41,7 +41,7 @@ function isInsideStage(clientX: number, clientY: number): boolean {
 /** Skill bar (P9): KEY + NAME + LOCKED state + COOLDOWN for the currently
  *  equipped weapon/Core. Derives from the same authoritative hotbar state as
  *  combat, and from the transient skillState the combat loop reports to. */
-export function SkillBar({ preview = false }: { preview?: boolean } = {}) {
+export function SkillBar({ preview = false, slot, showAmmo = false }: { preview?: boolean; slot?: SkillSlotKey; showAmmo?: boolean } = {}) {
   const hotbar = useGameStore((s) => s.hotbar);
   const archetype = useGameStore((s) => s.player.archetype);
   const isItemSkillUnlocked = useGameStore((s) => s.isItemSkillUnlocked);
@@ -106,9 +106,13 @@ export function SkillBar({ preview = false }: { preview?: boolean } = {}) {
   // representative 5-slot row keeps the element visible and selectable in the
   // Custom HUD editor canvas. Names still come from the real skill lists above
   // whenever a weapon is equipped.
-  if (preview && rendered.length === 0) {
+  // The editor renders each of the five slots as its own element, so the
+  // preview must expose all five even when fewer skills exist for the equipped
+  // weapon; missing slots get an empty representative entry.
+  if (preview) {
+    const present = new Set(rendered.map((r) => r.key));
     for (const key of SKILL_SLOT_KEYS) {
-      rendered.push({ key, name: '', id: '', actionIndex: null });
+      if (!present.has(key)) rendered.push({ key, name: '', id: '', actionIndex: null });
     }
   }
 
@@ -140,9 +144,20 @@ export function SkillBar({ preview = false }: { preview?: boolean } = {}) {
   // the height), so a fixed px offset collided with it once the viewport got
   // short (4:3). 15dvh + 32px keeps the bar a constant ~12px clear above that
   // band at every height; the clamps only guard degenerate viewports.
+  // M1W4D1 #5 — slot mode renders exactly one Z/X/C/V/F element so UI.tsx can
+  // position each independently. A slot with no skill renders nothing in-game
+  // (the old bar simply omitted empty slots); the editor preview fills all five
+  // so every slot stays visible and selectable. The gun/crossbow ammo pill rides
+  // with the F slot's element to stay at the end of the row.
+  const rows = slot ? rendered.filter((sk) => sk.key === slot) : rendered;
+  const showGunPill = cat === 'gun' && selected !== 'crossbow';
+  const showCrossbowPill = selected === 'crossbow';
+  const renderAmmo = (showAmmo || slot === undefined) && (showGunPill || showCrossbowPill);
+  if (slot && rows.length === 0 && !renderAmmo) return null;
+
   return (
     <div className="flex items-center gap-2" style={{ pointerEvents: 'none' }}>
-      {rendered.map((sk) => {
+      {rows.map((sk) => {
         const hasSkill = sk.actionIndex !== null && itemId !== null;
         const unlocked = hasSkill && itemId !== null ? isItemSkillUnlocked(itemId, sk.actionIndex as number) : false;
         // Cooldown comes from the transient gameplay feedback state, so the
@@ -172,7 +187,7 @@ export function SkillBar({ preview = false }: { preview?: boolean } = {}) {
           </button>
         );
       })}
-      {cat === 'gun' && selected !== 'crossbow' && (
+      {renderAmmo && showGunPill && (
         <div className="flex items-center gap-1.5 border px-3 py-1.5" style={{ background: 'rgba(20,16,8,0.85)', borderColor: 'rgba(214,138,49,0.55)' }}>
           <span className="text-xs font-bold tracking-wide" style={{ color: gunAmmo > 0 ? '#d68a31' : '#f87171' }}>
             {gunAmmo}/{2}
@@ -187,7 +202,7 @@ export function SkillBar({ preview = false }: { preview?: boolean } = {}) {
           </span>
         </div>
       )}
-      {selected === 'crossbow' && (
+      {renderAmmo && showCrossbowPill && (
         <div className="flex items-center gap-1.5 border px-3 py-1.5" style={{ background: 'rgba(20,16,8,0.85)', borderColor: 'rgba(214,138,49,0.55)' }}>
           <span className="text-xs font-bold tracking-wide" style={{ color: crossbowAmmo > 0 ? '#d68a31' : '#f87171' }}>
             {crossbowAmmo}/{CROSSBOW_CONFIG.ammoCapacity}
@@ -417,24 +432,19 @@ export default function UI() {
       return;
     }
 
-    // Bar-area input lock (M1W2D3 #1 WS3): the HUD layer spans the viewport so
-    // its elements can live in the letterbox region, but empty-space gameplay
-    // input is only accepted inside the 16:9 stage, so a tap or drag out in the
-    // bars cannot start a camera drag or a tap-attack. The joystick is the one
-    // exception: it is a pointer-events-none control driven by this very
-    // handler, so a grab on it must work wherever the layer move placed it.
-    // A rejected press never registers a pointer id, so the move/up handlers
-    // stay inert for it.
+    // M1W4D1 #2 — bar-area input release: the letterbox only hides visual
+    // content, it no longer swallows gameplay input. Camera drag and
+    // tap-attack are accepted anywhere, including the bars. Only the joystick
+    // grab stays gated to the 16:9 stage, because the joystick control
+    // physically sits inside it — a press out in the bars must not grab it.
     const jRect = joystickRef.current?.getBoundingClientRect();
     const onJoystick = jRect
       ? e.clientX >= jRect.left && e.clientX <= jRect.right &&
         e.clientY >= jRect.top && e.clientY <= jRect.bottom
       : false;
-    if (!onJoystick && !isInsideStage(e.clientX, e.clientY)) {
-      return;
-    }
+    const insideStage = isInsideStage(e.clientX, e.clientY);
 
-    if (onJoystick || e.clientX < window.innerWidth / 2) {
+    if (onJoystick || (insideStage && e.clientX < window.innerWidth / 2)) {
       if (joystickPointerId.current === null) {
         joystickPointerId.current = e.pointerId;
         if (joystickRef.current) {
@@ -860,22 +870,32 @@ export default function UI() {
         </div>
       )}
 
-      {hudLayout.skillBar.visible && (
-        <div
-          className="absolute z-30"
-          style={{
-            left: `${hudLayout.skillBar.position.x * 100}%`,
-            top: `${hudLayout.skillBar.position.y * 100}%`,
-            transform: `translate(-50%, -50%) scale(${hudLayout.skillBar.size / 100})`,
-            transformOrigin: 'center center',
-            ...(hudLayout.skillBar.box ? { width: `${hudLayout.skillBar.box.w * 100}%`, height: `${hudLayout.skillBar.box.h * 100}%` } : {}),
-            opacity: hudLayout.skillBar.opacity / 100,
-            pointerEvents: 'none',
-          }}
-        >
-          <SkillBar />
-        </div>
-      )}
+      {/* Skill slots (M1W4D1 #5): the old single skillBar container is split
+          into five independently positioned elements. Each reads its own
+          hudLayout entry. The ammo pill rides with the F slot so the
+          gun/crossbow readout stays at the end of the row. */}
+      {SKILL_SLOT_KEYS.map((slotKey) => {
+        const elId = `skill${slotKey}` as const;
+        const cfg = hudLayout[elId];
+        if (!cfg.visible) return null;
+        return (
+          <div
+            key={elId}
+            className="absolute z-30"
+            style={{
+              left: `${cfg.position.x * 100}%`,
+              top: `${cfg.position.y * 100}%`,
+              transform: `translate(-50%, -50%) scale(${cfg.size / 100})`,
+              transformOrigin: 'center center',
+              ...(cfg.box ? { width: `${cfg.box.w * 100}%`, height: `${cfg.box.h * 100}%` } : {}),
+              opacity: cfg.opacity / 100,
+              pointerEvents: 'none',
+            }}
+          >
+            <SkillBar slot={slotKey} showAmmo={slotKey === 'F'} />
+          </div>
+        );
+      })}
 
       {/* NOTE: the standalone Attack button was removed (M1W2D2 — mobile
           input consolidation). The right gameplay region provides attack
@@ -986,10 +1006,10 @@ export default function UI() {
 
       {/* Desktop Hotbar — a customizable HUD element (M1W3D6 #1 WS3,
           `desktopHotbar`). The wrapper owns position/scale/opacity; the hotbar
-          keeps its own look and its desktop-only gate. Default position
-          reproduces the previous `bottom-4 left-1/2` placement on a 16:9
-          viewport. */}
-      {!isMobile && hudLayout.desktopHotbar.visible && (
+          keeps its own look. M1W4D1 E removed the desktop-only `!isMobile`
+          gate, so it renders on mobile too. Default position reproduces the
+          previous `bottom-4 left-1/2` placement on a 16:9 viewport. */}
+      {hudLayout.desktopHotbar.visible && (
         <div
           className="absolute z-40"
           style={{

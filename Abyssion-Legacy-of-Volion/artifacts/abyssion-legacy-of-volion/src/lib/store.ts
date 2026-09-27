@@ -177,8 +177,10 @@ interface GameState {
   lootDrops: LootItem[];
   notifications: Notification[];
   settings: {
-    resolution: string;
-    fps: number;
+    /** Quality ladder label (Settings > Quality), e.g. '144p'...'QHD'. Defaults to HD. */
+    quality: string;
+    /** Frame cap: a number of FPS, or 'unlimited'. Defaults to 60. */
+    fps: number | 'unlimited';
     shadows: boolean;
     cameraMode: 'third' | 'second' | 'first';
     cameraSensitivity: number;
@@ -190,6 +192,9 @@ interface GameState {
     language: 'en' | 'id';
   };
   hudLayout: HudLayout;
+  /** M1W4D1 #5 — when true, editing any of the five Z/X/C/V/F skill slots
+   *  moves/resizes/toggles all five together. Default false (independent). */
+  skillCombine: boolean;
   hudEditMode: boolean;
   /** Manual skill HUD configuration (C3): per-item skill entries the SkillBar
    *  renders. Gameplay routing remains authoritative in Player.tsx. */
@@ -290,6 +295,8 @@ interface GameState {
   confirmComboHit: () => void; // advances combo display only on confirmed hit
   setSettings: (settings: Partial<GameState['settings']>) => void;
   setHudLayout: (layout: Partial<HudLayout>) => void;
+  /** M1W4D1 #5 — toggles the five-slot combine mode. Persisted with hudLayout. */
+  setSkillCombine: (value: boolean) => void;
   setHudElement: (id: HudElementId, config: Partial<HudElementConfig>) => void;
   resetHudElement: (id: HudElementId) => void;
   resetHudLayout: () => void;
@@ -312,6 +319,10 @@ interface GameState {
   /** Equip a weapon from inventory into the hotbar if the current archetype
    *  can use it. Returns false (with a notification) on an unusable item. */
   equipWeapon: (itemId: string) => boolean;
+  /** M1W4D1 F — clear one equipped armour slot, or the selected hotbar weapon
+   *  slot. The item is NOT removed from the inventory: the inventory entry is
+   *  authoritative and the slot only references it. */
+  unequipSlot: (slot: ArmourSlot | 'weapon') => void;
   /** Switch the combat archetype via NPC class selection. Deactivates
    *  incompatible equipment and is enforced by gameplay, not just UI. */
   chooseArchetype: (archetype: Archetype) => void;
@@ -593,21 +604,22 @@ function persistActiveSlot(slotId: SaveSlotId) {
   getStorage()?.setItem(ACTIVE_SLOT_KEY, String(slotId));
 }
 
-function readGlobalConfig(): { settings?: UnknownRecord; hudLayout?: unknown; skillHudConfig?: unknown } {
+function readGlobalConfig(): { settings?: UnknownRecord; hudLayout?: unknown; skillHudConfig?: unknown; skillCombine?: boolean } {
   const parsed = parseStorageValue(getStorage()?.getItem(GLOBAL_CONFIG_KEY) ?? null);
   if (!isRecord(parsed)) return {};
   return {
     settings: isRecord(parsed.settings) ? parsed.settings : undefined,
     hudLayout: parsed.hudLayout,
     skillHudConfig: isRecord(parsed.skillHudConfig) ? (parsed.skillHudConfig as SkillHudConfig) : undefined,
+    skillCombine: typeof parsed.skillCombine === 'boolean' ? parsed.skillCombine : undefined,
   };
 }
 
-function writeGlobalConfig(settings: GameState['settings'], hudLayout: HudLayout, skillHudConfig: SkillHudConfig) {
+function writeGlobalConfig(settings: GameState['settings'], hudLayout: HudLayout, skillHudConfig: SkillHudConfig, skillCombine: boolean) {
   const storage = getStorage();
   if (!storage) return;
   try {
-    storage.setItem(GLOBAL_CONFIG_KEY, JSON.stringify({ settings, hudLayout, skillHudConfig }));
+    storage.setItem(GLOBAL_CONFIG_KEY, JSON.stringify({ settings, hudLayout, skillHudConfig, skillCombine }));
   } catch (error) {
     console.error('Failed to save global game configuration', error);
   }
@@ -668,7 +680,7 @@ function migrateLegacySaveIfNeeded(): { records: unknown[]; validContainer: bool
     || (existingConfig.hudLayout === undefined && legacyHudLayout !== undefined)
   ) {
     const defaultSettings: GameState['settings'] = {
-      resolution: '1080p',
+      quality: 'HD',
       fps: 60,
       shadows: true,
       cameraMode: 'third',
@@ -683,6 +695,7 @@ function migrateLegacySaveIfNeeded(): { records: unknown[]; validContainer: bool
         ? migrateHudLayout(legacyHudLayout)
         : migrateHudLayout(existingConfig.hudLayout),
       {},
+      existingConfig.skillCombine ?? false,
     );
   }
 
@@ -808,7 +821,7 @@ export const useGameStore = create<GameState>((set, get) => ({
   damageVignetteRequest: null,
   lootDrops: [],
   notifications: [],    settings: {
-    resolution: '1080p',
+    quality: 'HD',
     fps: 60,
     shadows: true,
     cameraMode: 'third',
@@ -821,6 +834,7 @@ export const useGameStore = create<GameState>((set, get) => ({
   hudLayout: initialPersistence.globalConfig.hudLayout === undefined
     ? { ...DEFAULT_HUD_LAYOUT }
     : migrateHudLayout(initialPersistence.globalConfig.hudLayout),
+  skillCombine: initialPersistence.globalConfig.skillCombine ?? false,
   hudEditMode: false,
   skillHudConfig: (initialPersistence.globalConfig.skillHudConfig ?? {}) as SkillHudConfig,
   houseInterior: null,
@@ -1203,6 +1217,7 @@ export const useGameStore = create<GameState>((set, get) => ({
 
   setSettings: (newSettings) => set((state) => ({ settings: { ...state.settings, ...newSettings } })),
   setHudLayout: (partial) => set((state) => ({ hudLayout: { ...state.hudLayout, ...partial } })),
+  setSkillCombine: (value) => set({ skillCombine: value }),
   setHudElement: (id, config) => set((state) => ({
     hudLayout: { ...state.hudLayout, [id]: { ...state.hudLayout[id], ...config } },
   })),
@@ -1242,6 +1257,7 @@ export const useGameStore = create<GameState>((set, get) => ({
       hudLayout: globalConfig.hudLayout === undefined
         ? state.hudLayout
         : migrateHudLayout(globalConfig.hudLayout),
+      skillCombine: globalConfig.skillCombine ?? state.skillCombine,
     }));
   },
   // Dynamic save-state list: append a new empty state (unbounded).
@@ -2150,7 +2166,7 @@ export const useGameStore = create<GameState>((set, get) => ({
     if (!writeSlotRecords(nextRecords)) return;
 
     persistActiveSlot(state.activeSlot);
-    writeGlobalConfig(state.settings, state.hudLayout, state.skillHudConfig);
+    writeGlobalConfig(state.settings, state.hudLayout, state.skillHudConfig, state.skillCombine);
     const updatedSlots = readSlotRecords();
     set({
       saveSlots: getSaveSlotSummaries(updatedSlots.records, updatedSlots.validContainer),
@@ -2357,6 +2373,7 @@ export const useGameStore = create<GameState>((set, get) => ({
         : legacyHudLayout !== undefined
           ? migrateHudLayout(legacyHudLayout)
           : state.hudLayout,
+      skillCombine: globalConfig.skillCombine ?? state.skillCombine,
       quests: safeQuests,
       completedQuestIds: Array.isArray(parsed.completedQuestIds) ? parsed.completedQuestIds : [],
       encounterDefeats: Array.isArray(parsed.encounterDefeats) ? parsed.encounterDefeats : [],
@@ -2448,6 +2465,23 @@ export const useGameStore = create<GameState>((set, get) => ({
     get().setSelectedHotbarSlot(idx);
     get().addNotification(`Equipped ${def.name}`);
     return true;
+  },
+
+  unequipSlot: (slot) => {
+    if (slot === 'weapon') {
+      const idx = get().hotbar.selectedSlot;
+      if (get().hotbar.slots[idx]) {
+        get().setHotbarSlot(idx, null);
+        get().addNotification('Weapon unequipped.');
+      }
+      return;
+    }
+    set((state) => {
+      const nextSlots = { ...state.player.equippedArmourSlots, [slot]: null };
+      const legacy = nextSlots.helmet ?? nextSlots.chest ?? nextSlots.leggings ?? nextSlots.boots;
+      return { player: { ...state.player, equippedArmourSlots: nextSlots, equippedArmour: legacy } };
+    });
+    get().addNotification('Armour unequipped.');
   },
 
   chooseArchetype: (archetype) => {

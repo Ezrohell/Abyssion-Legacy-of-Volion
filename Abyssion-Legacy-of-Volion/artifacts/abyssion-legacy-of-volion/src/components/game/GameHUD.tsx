@@ -403,9 +403,12 @@ interface DraggableHudElementProps {
   selected?: boolean;
   /** Keep pointer events enabled outside edit mode (interactive controls). */
   interactive?: boolean;
+  /** M1W4D1 #5 — when set, a drop moves every listed element by the same
+   *  delta (the skill-slot combine mode). Empty/absent = move this one only. */
+  group?: HudElementId[];
 }
 
-function DraggableHudElement({ id, config, children, fullscreen, editable, onSelect, selected, interactive = false }: DraggableHudElementProps) {
+function DraggableHudElement({ id, config, children, fullscreen, editable, onSelect, selected, interactive = false, group }: DraggableHudElementProps) {
   const setHudElement = useGameStore(s => s.setHudElement);
   const dragState = useRef<{ startX: number; startY: number; origX: number; origY: number } | null>(null);
   const [dragging, setDragging] = useState(false);
@@ -444,11 +447,30 @@ function DraggableHudElement({ id, config, children, fullscreen, editable, onSel
   const handlePointerUp = useCallback(() => {
     if (!dragState.current) return;
     const finalPos = livePos ?? { x: config.position.x, y: config.position.y };
-    setHudElement(id, { position: finalPos });
+    if (group && group.length > 1) {
+      // M1W4D1 #5 — combine mode: translate the whole group by the drag delta.
+      const dx = finalPos.x - dragState.current.origX;
+      const dy = finalPos.y - dragState.current.origY;
+      const layout = useGameStore.getState().hudLayout;
+      const patch: Partial<Record<HudElementId, HudElementConfig>> = {};
+      for (const gid of group) {
+        const g = layout[gid];
+        patch[gid] = {
+          ...g,
+          position: {
+            x: Math.max(0, Math.min(1, g.position.x + dx)),
+            y: Math.max(0, Math.min(1, g.position.y + dy)),
+          },
+        };
+      }
+      useGameStore.getState().setHudLayout(patch);
+    } else {
+      setHudElement(id, { position: finalPos });
+    }
     dragState.current = null;
     setDragging(false);
     setLivePos(null);
-  }, [livePos, config.position.x, config.position.y, setHudElement, id]);
+  }, [livePos, config.position.x, config.position.y, setHudElement, id, group]);
 
   const pos = dragging && livePos ? livePos : config.position;
   const scale = config.size / 100;
@@ -687,7 +709,11 @@ export const HudElementContent: Record<HudElementId, () => React.ReactElement | 
   // Top-centre controls render directly in GameHUD (they need pointer events),
   // so the in-game content map only needs the key for type completeness.
   topCenterControls: () => null,
-  skillBar: () => null,
+  skillZ: () => null,
+  skillX: () => null,
+  skillC: () => null,
+  skillV: () => null,
+  skillF: () => null,
   // The mobile skill stack and the desktop hotbar are rendered by UI.tsx (they
   // need the gameplay pointer handlers), so gameplay needs no content renderer.
   mobileSkillButtons: () => null,
@@ -802,7 +828,11 @@ export const EditorHudElementContent: Record<HudElementId, () => React.ReactElem
   backpackBtn: EditorBackpackBtnContent,
   settingsBtn: EditorSettingsBtnContent,
   topCenterControls: () => <TopCenterControls preview />,
-  skillBar: () => <SkillBar preview />,
+  skillZ: () => <SkillBar preview slot="Z" />,
+  skillX: () => <SkillBar preview slot="X" />,
+  skillC: () => <SkillBar preview slot="C" />,
+  skillV: () => <SkillBar preview slot="V" />,
+  skillF: () => <SkillBar preview slot="F" showAmmo />,
   // Same components as gameplay, only the `preview` prop differs — so the
   // editor canvas is WYSIWYG for both elements.
   mobileSkillButtons: () => <MobileSkillButtons preview />,

@@ -12,7 +12,10 @@ import {
   BloomEffect,
   BlendFunction,
   OutlineEffect,
-  PixelationEffect,
+  VignetteEffect,
+  HueSaturationEffect,
+  NoiseEffect,
+  ChromaticAberrationEffect,
 } from 'postprocessing';
 import Player, { playerRigidBodyRef } from './Player';
 import { useGameStore } from '@/lib/store';
@@ -460,6 +463,15 @@ function DayNightCycle({
   const fogRef = useRef<THREE.FogExp2 | null>(null);
   if (fogRef.current === null) fogRef.current = new THREE.FogExp2(0x000000, 0);
 
+  // M1W4D1 #1 — E4 v2b zone post-process intensity. The tick rides this
+  // component's existing per-frame useFrame (no second useFrame): it already
+  // reads the authoritative player position and the zoneAt resolver for fog.
+  const currentZoneRef = useRef<ZoneId | ''>('');
+  const zoneFromRef = useRef(ZONE_POSTFX_INTENSITY.village);
+  const zoneTargetRef = useRef(ZONE_POSTFX_INTENSITY.village);
+  const zoneIntensityRef = useRef(ZONE_POSTFX_INTENSITY.village);
+  const zoneTransitionStartRef = useRef(0);
+
   useEffect(() => {
     const fog = fogRef.current;
     if (!fog) return;
@@ -541,22 +553,50 @@ function DayNightCycle({
     fog.color.setHex(FOG_ZONE_COLOR[zone]);
     if (night) fog.color.multiplyScalar(FOG_NIGHT_COLOR_SCALE);
     fog.density = FOG_BASE_DENSITY * FOG_ZONE_DENSITY[zone] * (night ? FOG_NIGHT_DENSITY_SCALE : 1);
+
+    // M1W4D1 #1 — E4 v2b zone post-process intensity. The first frame snaps to
+    // the starting zone; later zone changes interpolate over
+    // ZONE_POSTFX_TRANSITION_MS. Every write targets an existing field — no
+    // Color / Vector2 / array allocation per frame.
+    const now = performance.now();
+    if (currentZoneRef.current === '') {
+      currentZoneRef.current = zone;
+      zoneFromRef.current = ZONE_POSTFX_INTENSITY[zone];
+      zoneTargetRef.current = ZONE_POSTFX_INTENSITY[zone];
+      zoneTransitionStartRef.current = now;
+    } else if (zone !== currentZoneRef.current) {
+      currentZoneRef.current = zone;
+      zoneFromRef.current = zoneIntensityRef.current;
+      zoneTargetRef.current = ZONE_POSTFX_INTENSITY[zone];
+      zoneTransitionStartRef.current = now;
+    }
+    const t = Math.min(1, (now - zoneTransitionStartRef.current) / ZONE_POSTFX_TRANSITION_MS);
+    const intensity = zoneFromRef.current + (zoneTargetRef.current - zoneFromRef.current) * t;
+    zoneIntensityRef.current = intensity;
+    const stack = horrorStack;
+    if (stack) {
+      const wilderness = zone === 'wilderness';
+      stack.vignette.darkness =
+        HORROR_VIGNETTE_DARKNESS * intensity
+        + (wilderness ? HORROR_WILDERNESS_DARKNESS_BOOST * intensity : 0);
+      stack.hueSat.saturation =
+        HORROR_SATURATION * intensity
+        - (wilderness ? HORROR_WILDERNESS_SATURATION_BOOST * intensity : 0);
+      stack.noise.blendMode.opacity.value = HORROR_NOISE_OPACITY * intensity;
+      const chromaOffset = HORROR_CHROMA_OFFSET * intensity;
+      stack.chroma.offset.set(chromaOffset, chromaOffset);
+    }
   });
 
   return null;
 }
 
 /* ── M1W3D6 #2 F7 — POST-PROCESSING PIPELINE (E4 §6) ───────────────────────
- *  Two effects, in §6 order, and nothing else:
- *    a. pixelate — the whole pipeline renders at min(0.5, 1280 /
- *       viewportWidth) × the canvas and composites back up with
- *       nearest-neighbour sampling;
- *    b. bloom    — threshold 0.85, intensity 0.3, radius 0.6, mipmap blur, in
- *       its OWN pass so it consumes the pixelated buffer and the glow is
- *       pixelated too (§6b). The library forbids merging a pixelation effect
- *       with a convolution effect, so the two cannot share one pass.
- *  §6a's ordered dithering is optional and is omitted — no texture is authored
- *  this session. The cel shader and the outline are F8.
+ *  Chain: RenderPass → Bloom → Outline → the E4 v2b horror stack (vignette,
+ *  hue/saturation, noise, chromatic aberration). The half-resolution
+ *  buffer is the primary pixelated reading; the screen-space pixelation effect
+ *  was removed in E4 v2b. Bloom is threshold 0.85, intensity 0.3, radius 0.6,
+ *  mipmap blur, in its OWN pass. The cel shader and the outline are F8.
  *
  *  The library is driven directly rather than through
  *  @react-three/postprocessing: that wrapper declares `postprocessing` as a
@@ -571,16 +611,57 @@ function DayNightCycle({
  *  GameScene.
  */
 
-/** §6a cap and reference width: min(0.5, 1280 / viewportWidth). */
-const POST_FX_MAX_RESOLUTION_SCALE = 0.5;
-const POST_FX_REFERENCE_WIDTH = 1280;
-/** §6a pixel granularity — coarser than the library's default of 30. */
-const POST_FX_PIXEL_GRANULARITY = 8;
+/* ── M1W4D1 #1 — QUALITY + FPS SETTINGS ─────────────────────────────────────
+ *  Quality replaces the §6a min(0.5, 1280 / width) art cap: each label maps to
+ *  a target internal render resolution, and the composer's buffers are sized to
+ *  that target height (never exceeding the device resolution). FPS caps how
+ *  often the composer renders — gameplay, physics and input are untouched. */
+const QUALITY_PRESETS: Record<string, { width: number; height: number }> = {
+  '144p': { width: 256, height: 144 },
+  'LD': { width: 640, height: 360 },
+  'LD+': { width: 720, height: 400 },
+  'SD': { width: 854, height: 480 },
+  'SD+': { width: 960, height: 540 },
+  'HD': { width: 1280, height: 720 },
+  'HD+': { width: 1600, height: 900 },
+  'FHD': { width: 1920, height: 1080 },
+  'FHD+': { width: 2560, height: 1080 },
+  'QHD': { width: 2560, height: 1440 },
+};
+const DEFAULT_QUALITY = 'HD';
+const DEFAULT_FPS = 60;
 /** §6b bloom. */
 const POST_FX_BLOOM_THRESHOLD = 0.85;
 const POST_FX_BLOOM_SMOOTHING = 0.2;
 const POST_FX_BLOOM_INTENSITY = 0.3;
 const POST_FX_BLOOM_RADIUS = 0.6;
+
+/* ── M1W4D1 #1 — E4 v2b HORROR POST-PROCESSING STACK (E4 v2 §6) ─────────────
+ *  One pass, four library effects, driven by zone intensity: Village Haven
+ *  0.30×, Dangerous Territory 1.00×, unnamed wilderness 1.00× plus a darkness
+ *  boost. A zone change interpolates over 3 s. No custom shader, and the
+ *  per-frame tick writes only into the effects' existing numeric fields. */
+const HORROR_VIGNETTE_OFFSET = 0.35;
+const HORROR_VIGNETTE_DARKNESS = 0.65;
+const HORROR_SATURATION = -0.35;
+const HORROR_NOISE_OPACITY = 0.08;
+const HORROR_CHROMA_OFFSET = 0.0008;
+/** Wilderness-only boost applied on top of the 1.00× stack. */
+const HORROR_WILDERNESS_DARKNESS_BOOST = 0.10;
+const HORROR_WILDERNESS_SATURATION_BOOST = 0.05;
+const ZONE_POSTFX_INTENSITY: Record<ZoneId, number> = { village: 0.30, dangerous: 1.00, wilderness: 1.00 };
+const ZONE_POSTFX_TRANSITION_MS = 3000;
+
+/** M1W4D1 #1 — the live horror effect instances. Written once on composer mount
+ *  and read by DayNightCycle's single per-frame tick, so the zone intensity
+ *  needs no second useFrame. */
+interface HorrorStack {
+  vignette: VignetteEffect;
+  hueSat: HueSaturationEffect;
+  noise: NoiseEffect;
+  chroma: ChromaticAberrationEffect;
+}
+let horrorStack: HorrorStack | null = null;
 
 /* ── M1W3D6 #2 F8b — OUTLINE (E4 §3) ───────────────────────────────────────
  *  The library's OutlineEffect has NO pixel-thickness option. Its edge detector
@@ -631,12 +712,18 @@ function PostProcessing() {
   // The effective pixel ratio, so a DPR change alone still re-sizes the buffers.
   const dpr = useThree((s) => s.viewport.dpr);
 
-  // §6a render scale. The canvas `dpr` stays display density (R4); this is the
-  // art-direction density, and it is applied to the composer's buffers only.
+  // M1W4D1 #1 — Quality drives the composer's render scale. The canvas `dpr`
+  // stays display density (R4); this replaces the §6a art cap with the selected
+  // ladder rung and is applied to the composer's buffers only.
+  const quality = useGameStore((s) => s.settings.quality);
+  const targetResolution = QUALITY_PRESETS[quality] ?? QUALITY_PRESETS[DEFAULT_QUALITY];
   const resolutionScale = Math.min(
-    POST_FX_MAX_RESOLUTION_SCALE,
-    POST_FX_REFERENCE_WIDTH / Math.max(1, width),
+    1,
+    targetResolution.height / Math.max(1, height * dpr),
   );
+  // M1W4D1 #1 — FPS cap. Read reactively so a change re-registers the callback.
+  const fpsSetting = useGameStore((s) => s.settings.fps);
+  const lastRenderRef = useRef(0);
 
   const composerRef = useRef<EffectComposer | null>(null);
   // F8b: the outline effect, so the resize effect can re-derive its §3 thickness.
@@ -653,9 +740,9 @@ function PostProcessing() {
       // A bloom threshold is a linear-luminance cut; 8-bit buffers band it.
       frameBufferType: THREE.HalfFloatType,
     });
-    // Pass 1 renders the scene, pass 2 pixelates it, pass 3 blooms the result.
+    // Pass 1 renders the scene, pass 2 blooms it, pass 3 outlines it, pass 4
+    // applies the E4 v2b horror stack.
     composer.addPass(new RenderPass(scene, camera));
-    composer.addPass(new EffectPass(camera, new PixelationEffect(POST_FX_PIXEL_GRANULARITY)));
     composer.addPass(
       new EffectPass(
         camera,
@@ -699,6 +786,28 @@ function PostProcessing() {
       if (shaded) outline.selection.add(mesh);
     });
     composer.addPass(new EffectPass(camera, outline));
+    // Pass 4 (M1W4D1 #1, E4 v2b) — the horror stack: ONE pass, four library
+    // effects, order Vignette → HueSaturation → Noise → ChromaticAberration.
+    // Their numeric parameters are driven per zone by DayNightCycle's tick, so
+    // the instances are published for that tick to reach them.
+    const vignette = new VignetteEffect({
+      offset: HORROR_VIGNETTE_OFFSET,
+      darkness: HORROR_VIGNETTE_DARKNESS,
+    });
+    const hueSat = new HueSaturationEffect({ hue: 0, saturation: HORROR_SATURATION });
+    const noise = new NoiseEffect({
+      premultiply: true,
+      blendFunction: BlendFunction.OVERLAY,
+    });
+    noise.blendMode.opacity.value = HORROR_NOISE_OPACITY;
+    const chroma = new ChromaticAberrationEffect({
+      offset: new THREE.Vector2(HORROR_CHROMA_OFFSET, HORROR_CHROMA_OFFSET),
+      radialModulation: true,
+      modulationOffset: 0.15,
+    });
+    // FilmEffect does not exist in postprocessing@6.39.5 — skipped, no substitute.
+    composer.addPass(new EffectPass(camera, vignette, hueSat, noise, chroma));
+    horrorStack = { vignette, hueSat, noise, chroma };
     // postprocessing >= 6.36 keeps a main camera on the composer and forwards it
     // to every registered pass; the outline effect's internal depth and mask
     // passes need it for the near/far planes and the perspective define.
@@ -720,6 +829,7 @@ function PostProcessing() {
       composer.dispose();
       composerRef.current = null;
       outlineRef.current = null;
+      horrorStack = null;
       gl.autoClear = autoClear;
     };
   }, [gl, scene, camera]);
@@ -749,7 +859,19 @@ function PostProcessing() {
   // own gl.render. It runs after every priority-0 subscriber, so the E2/F4 day
   // cycle has already written the lights, the sky and the clear colour.
   useFrame((_state, delta) => {
-    composerRef.current?.render(delta);
+    const composer = composerRef.current;
+    if (!composer) return;
+    // M1W4D1 #1 — frame cap. Only the composer render is throttled; every
+    // priority-0 subscriber (gameplay, physics, input) still runs at the full
+    // tick rate, so the simulation is never frame-limited.
+    if (fpsSetting !== 'unlimited') {
+      const targetFps = typeof fpsSetting === 'number' && fpsSetting > 0 ? fpsSetting : DEFAULT_FPS;
+      const minIntervalMs = 1000 / targetFps;
+      const now = performance.now();
+      if (now - lastRenderRef.current < minIntervalMs) return;
+      lastRenderRef.current = now;
+    }
+    composer.render(delta);
   }, 1);
 
   return null;

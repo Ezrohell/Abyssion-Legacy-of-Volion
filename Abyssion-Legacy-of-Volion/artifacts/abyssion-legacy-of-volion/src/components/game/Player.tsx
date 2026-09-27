@@ -342,6 +342,14 @@ export default function Player() {
   const attackInputBufferRef = useRef(0);      // buffered attack press timer (seconds)
   const trailMeshRef = useRef<THREE.Mesh>(null);
   const trailAlphaRef = useRef(0);             // trail visibility alpha (0=hidden)
+  // F3 — per-weapon trails (crossbow / staff / core). Same single-plane +
+  // alpha-ref pattern as the sword trail above.
+  const crossbowTrailMeshRef = useRef<THREE.Mesh>(null);
+  const crossbowTrailAlphaRef = useRef(0);
+  const staffTrailMeshRef = useRef<THREE.Mesh>(null);
+  const staffTrailAlphaRef = useRef(0);
+  const coreTrailMeshRef = useRef<THREE.Mesh>(null);
+  const coreTrailAlphaRef = useRef(0);
 
   // Reusable per-frame vectors (avoid GC pressure from repeated allocations)
   const _v1 = useRef(new THREE.Vector3()).current;
@@ -960,6 +968,7 @@ export default function Player() {
         if (pressed && !was && !isDodgingRef.current && cds[skill.id] <= 0) {
           cds[skill.id] = SKILL_COOLDOWNS[skill.id];
           castAnimRef.current = 1;
+          staffTrailAlphaRef.current = 1;
           useGameStore.getState().reportSkillFired(skill.id);
           // Cast origin: staff head (chest height, slightly ahead of player).
           _v1.set(translation.x, translation.y + 1.2, translation.z);
@@ -1321,6 +1330,7 @@ export default function Player() {
           coreCooldowns[skill.id] = RESONANCE_SKILL_COOLDOWNS[skill.id];
           coreSt.reportSkillFired(skill.id);
           if (skill.id === 'resonant_overdrive') {
+          coreTrailAlphaRef.current = 1;
             coreOverdriveRef.current = skill.duration!;
             coreSt.addNotification('Resonant Overdrive: resonance skills empowered (+35% for 8s).');
           } else if (skill.id === 'cataclysmic_resonance') {
@@ -1465,6 +1475,7 @@ export default function Player() {
         // crossbowClick above is the click edge.
         if (fireCrossbowArrow(0, CROSSBOW_CONFIG.damage * crossbowStreakMultiplier(crossbowStreakRef.current), 0)) {
           crossbowAmmoRef.current -= 1;
+          crossbowTrailAlphaRef.current = 1;
           crossbowFireTimerRef.current = crossbowClick ? CROSSBOW_CONFIG.fireIntervalClick : CROSSBOW_CONFIG.fireIntervalHold;
           if (crossbowAmmoRef.current <= 0) {
             // Empty — start the reload; it supersedes the shot interval.
@@ -1773,6 +1784,36 @@ export default function Player() {
       }
     } else if (trailMeshRef.current && trailMeshRef.current.visible) {
       trailMeshRef.current.visible = false;
+    }
+
+    // F3 — crossbow / staff / core trails. Same scalar fade idiom as the sword
+    // trail: no helper, no allocation, opacity writes only.
+    if (crossbowTrailAlphaRef.current > 0.001) {
+      crossbowTrailAlphaRef.current = Math.max(0, crossbowTrailAlphaRef.current - delta / 0.15);
+      if (crossbowTrailMeshRef.current) {
+        crossbowTrailMeshRef.current.visible = true;
+        (crossbowTrailMeshRef.current.material as THREE.MeshBasicMaterial).opacity = crossbowTrailAlphaRef.current * 0.6;
+      }
+    } else if (crossbowTrailMeshRef.current && crossbowTrailMeshRef.current.visible) {
+      crossbowTrailMeshRef.current.visible = false;
+    }
+    if (staffTrailAlphaRef.current > 0.001) {
+      staffTrailAlphaRef.current = Math.max(0, staffTrailAlphaRef.current - delta / 0.25);
+      if (staffTrailMeshRef.current) {
+        staffTrailMeshRef.current.visible = true;
+        (staffTrailMeshRef.current.material as THREE.MeshBasicMaterial).opacity = staffTrailAlphaRef.current * 0.5;
+      }
+    } else if (staffTrailMeshRef.current && staffTrailMeshRef.current.visible) {
+      staffTrailMeshRef.current.visible = false;
+    }
+    if (coreTrailAlphaRef.current > 0.001) {
+      coreTrailAlphaRef.current = Math.max(0, coreTrailAlphaRef.current - delta / 0.30);
+      if (coreTrailMeshRef.current) {
+        coreTrailMeshRef.current.visible = true;
+        (coreTrailMeshRef.current.material as THREE.MeshBasicMaterial).opacity = coreTrailAlphaRef.current * 0.4;
+      }
+    } else if (coreTrailMeshRef.current && coreTrailMeshRef.current.visible) {
+      coreTrailMeshRef.current.visible = false;
     }
     } // end !staffEquipped (melee combo suppressed while staff equipped)
 
@@ -2348,6 +2389,11 @@ export default function Player() {
                   <sphereGeometry args={[0.2, 12, 12]} />
                   <meshBasicMaterial color="#7dd3fc" transparent opacity={0.25} depthWrite={false} />
                 </mesh>
+                {/* F3 staff trail — cast-flourish ring at the orb tip. */}
+                <mesh ref={staffTrailMeshRef} position={[0, 0.95, 0]} visible={false}>
+                  <planeGeometry args={[0.40, 0.40]} />
+                  <meshBasicMaterial color={IMPACT.staff.color} transparent opacity={0} depthWrite={false} />
+                </mesh>
               </group>
             </group>
             {/* M1887 - child of the right arm group, shown only when the gun
@@ -2400,6 +2446,11 @@ export default function Player() {
                   <boxGeometry args={[0.02, 0.02, 0.42]} />
                   <meshToonMaterial color="#cbd5e1" />
                 </mesh>
+                {/* F3 crossbow trail — short barrel-tip bloom facing +Z. */}
+                <mesh ref={crossbowTrailMeshRef} position={[0, 0.1, 0.62]} visible={false}>
+                  <planeGeometry args={[0.30, 0.10]} />
+                  <meshBasicMaterial color={IMPACT.crossbow.color} transparent opacity={0} depthWrite={false} />
+                </mesh>
               </group>
             </group>
             {/* Resonance Core - child of the right arm group, shown only when
@@ -2413,6 +2464,11 @@ export default function Player() {
                 <mesh>
                   <octahedronGeometry args={[0.26, 0]} />
                   <meshBasicMaterial color="#c4b5fd" transparent opacity={0.22} depthWrite={false} />
+                </mesh>
+                {/* F3 core trail — expanding shadow ribbon from the Core. */}
+                <mesh ref={coreTrailMeshRef} position={[0, 0, 0]} visible={false}>
+                  <planeGeometry args={[0.60, 0.20]} />
+                  <meshBasicMaterial color={IMPACT.core.color} transparent opacity={0} depthWrite={false} />
                 </mesh>
               </group>
             </group>

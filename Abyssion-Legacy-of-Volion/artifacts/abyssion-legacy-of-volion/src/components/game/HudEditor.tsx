@@ -1,19 +1,25 @@
 'use client';
 
 import { useGameStore } from '@/lib/store';
-import { HudElementId, HUD_ELEMENT_LABELS, SKILL_SLOT_KEYS, SkillSlotKey } from '@/lib/hudConfig';
+import { HudElementId, HudElementConfig, HUD_ELEMENT_LABELS, SKILL_SLOT_KEYS, SkillSlotKey } from '@/lib/hudConfig';
 import { weaponCategoryOf } from '@/lib/items';
 import { SWORD_SKILLS } from '@/lib/swordSkills';
 import { WATER_STAFF_SKILLS } from '@/lib/staffSkills';
 import { M1887_SKILLS, DAGGER_SKILLS, RESONANCE_SKILLS } from '@/lib/weaponContent';
 import { CROSSBOW_SKILLS } from '@/lib/crossbowContent';
 import { DraggableHudElement, EditorHudElementContent } from './GameHUD';
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useEffect } from 'react';
 import { RotateCcw, Check, X } from 'lucide-react';
+
+/** M1W4D1 #5 — the five skill-slot ids the combine toggle groups together. */
+const SKILL_SLOT_IDS: HudElementId[] = ['skillZ', 'skillX', 'skillC', 'skillV', 'skillF'];
 
 export default function HudEditor() {
   const hudLayout = useGameStore(s => s.hudLayout);
   const setHudElement = useGameStore(s => s.setHudElement);
+  const setHudLayout = useGameStore(s => s.setHudLayout);
+  const skillCombine = useGameStore(s => s.skillCombine);
+  const setSkillCombine = useGameStore(s => s.setSkillCombine);
   const resetHudElement = useGameStore(s => s.resetHudElement);
   const resetHudLayout = useGameStore(s => s.resetHudLayout);
   const setHudEditMode = useGameStore(s => s.setHudEditMode);
@@ -26,6 +32,18 @@ export default function HudEditor() {
   const resetSkillHudConfig = useGameStore((s) => s.resetSkillHudConfig);
   const hotbar = useGameStore((s) => s.hotbar);
   const archetype = useGameStore((s) => s.player.archetype);
+
+  // M1W4D1 #3 — the editor must match the in-game gate. UI.tsx hides the
+  // desktop hotbar during play with `!isMobile`, so on mobile the editor must
+  // not offer a draggable element the game never renders. Same expression as
+  // UI.tsx's checkMobile, so the two surfaces agree.
+  const [isMobile, setIsMobile] = useState(false);
+  useEffect(() => {
+    const checkMobile = () => setIsMobile(window.innerWidth <= 1024 || 'ontouchstart' in window);
+    checkMobile();
+    window.addEventListener('resize', checkMobile);
+    return () => window.removeEventListener('resize', checkMobile);
+  }, []);
 
   // Authoritative skill data per configurable item. The editor can only
   // assign real skills from this list — it cannot invent a gameplay skill.
@@ -41,7 +59,10 @@ export default function HudEditor() {
 
   const persistSkillConfig = () => saveGame();
 
-  const elementIds = Object.keys(HUD_ELEMENT_LABELS) as HudElementId[];
+  // Desktop-only elements drop out of the editor on mobile (M1W4D1 #3),
+  // mirroring the in-game `!isMobile` gate so editor and gameplay match.
+  const elementIds = (Object.keys(HUD_ELEMENT_LABELS) as HudElementId[])
+    .filter((id) => id !== 'desktopHotbar' || !isMobile);
 
   const handleDone = useCallback(() => {
     saveGame();
@@ -62,6 +83,19 @@ export default function HudEditor() {
   const equippedItem = configurableItems.find((i) => i.id === equippedItemId) ?? null;
   const equippedSkillEntries = equippedItem ? (skillHudConfig[equippedItem.id] ?? []) : [];
 
+  // M1W4D1 #5 — route every popup edit through here so the five skill slots can
+  // be edited as one group when combine is on, and stay independent otherwise.
+  const applyConfig = useCallback((updates: Partial<HudElementConfig>) => {
+    if (!selectedId) return;
+    if (skillCombine && SKILL_SLOT_IDS.includes(selectedId)) {
+      const patch: Partial<Record<HudElementId, HudElementConfig>> = {};
+      for (const sid of SKILL_SLOT_IDS) patch[sid] = { ...hudLayout[sid], ...updates };
+      setHudLayout(patch);
+    } else {
+      setHudElement(selectedId, updates);
+    }
+  }, [selectedId, skillCombine, hudLayout, setHudLayout, setHudElement]);
+
   const stepBtn = 'w-5 h-5 rounded border border-gray-700 text-gray-200 hover:bg-white/10 flex items-center justify-center leading-none';
 
   const boxPct = (key: 'w' | 'h'): number => {
@@ -73,7 +107,7 @@ export default function HudEditor() {
     if (!selectedId) return;
     const clamped = Math.max(5, Math.min(100, pct));
     const cur = hudLayout[selectedId].box ?? { w: 0.25, h: 0.25 };
-    setHudElement(selectedId, { box: { ...cur, [key]: clamped / 100 } });
+    applyConfig({ box: { ...cur, [key]: clamped / 100 } });
   };
 
   const cfg = selectedId ? hudLayout[selectedId] : null;
@@ -137,6 +171,7 @@ export default function HudEditor() {
                 fullscreen={false}
                 selected={selectedId === id}
                 onSelect={() => setSelectedId(id)}
+                group={skillCombine && SKILL_SLOT_IDS.includes(id) ? SKILL_SLOT_IDS : undefined}
               >
                 <div style={{ opacity: config.visible ? 1 : 0.25 }}>
                   <Content />
@@ -198,10 +233,24 @@ export default function HudEditor() {
               </div>
 
               <div className="space-y-1.5">
+                {/* M1W4D1 #5 — combine toggle, only for the five skill slots. */}
+                {SKILL_SLOT_IDS.includes(selectedId) && (
+                  <button
+                    type="button"
+                    onClick={() => setSkillCombine(!skillCombine)}
+                    className="flex w-full items-center justify-between px-2 py-1 rounded border border-amber-700/60 bg-amber-900/20 hover:bg-amber-900/30"
+                  >
+                    <span className="text-amber-200">Combine skill slots</span>
+                    <span className={skillCombine ? 'text-green-400' : 'text-gray-500'}>
+                      {skillCombine ? 'ON' : 'OFF'}
+                    </span>
+                  </button>
+                )}
+
                 {/* Visibility */}
                 <button
                   type="button"
-                  onClick={() => setHudElement(selectedId, { visible: !cfg.visible })}
+                  onClick={() => applyConfig({ visible: !cfg.visible })}
                   className="flex w-full items-center justify-between px-2 py-1 rounded border border-gray-700 bg-black/30 hover:bg-white/5"
                 >
                   <span className="text-gray-300">Visible</span>
@@ -215,10 +264,10 @@ export default function HudEditor() {
                   <div className="flex items-center gap-2">
                     <span className="w-12 text-gray-400">Scale</span>
                     <button type="button" className={stepBtn}
-                      onClick={() => setHudElement(selectedId, { size: Math.max(50, cfg.size - 5) })}>−</button>
+                      onClick={() => applyConfig({ size: Math.max(50, cfg.size - 5) })}>−</button>
                     <span className="w-12 text-center tabular-nums">{cfg.size}%</span>
                     <button type="button" className={stepBtn}
-                      onClick={() => setHudElement(selectedId, { size: Math.min(200, cfg.size + 5) })}>+</button>
+                      onClick={() => applyConfig({ size: Math.min(200, cfg.size + 5) })}>+</button>
                   </div>
                 )}
 
@@ -250,14 +299,14 @@ export default function HudEditor() {
                 <div className="flex items-center gap-2">
                   <span className="w-12 text-gray-400">Opacity</span>
                   <button type="button" className={stepBtn}
-                    onClick={() => setHudElement(selectedId, { opacity: Math.max(0, cfg.opacity - 5) })}>−</button>
+                    onClick={() => applyConfig({ opacity: Math.max(0, cfg.opacity - 5) })}>−</button>
                   <span className="w-12 text-center tabular-nums">{cfg.opacity}%</span>
                   <button type="button" className={stepBtn}
-                    onClick={() => setHudElement(selectedId, { opacity: Math.min(100, cfg.opacity + 5) })}>+</button>
+                    onClick={() => applyConfig({ opacity: Math.min(100, cfg.opacity + 5) })}>+</button>
                 </div>
 
-                {/* Skill picker — only for the skill bar */}
-                {selectedId === 'skillBar' && (
+                {/* Skill picker — available for any of the five skill slots */}
+                {SKILL_SLOT_IDS.includes(selectedId) && (
                   <div className="mt-2 border-t border-gray-700 pt-2">
                     <div className="flex items-center justify-between mb-1">
                       <span className="text-gray-400 uppercase tracking-wider">Skill Slots</span>

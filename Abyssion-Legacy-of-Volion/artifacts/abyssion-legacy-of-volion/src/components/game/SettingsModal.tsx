@@ -16,6 +16,24 @@ const TABS: { id: TabId; label: string }[] = [
   { id: 'debug', label: 'Debug Mode' },
 ];
 
+// M1W4D1 #1 — Quality and FPS ladders. Both render as chip buttons (see
+// OptionSelector), never a native <select> or a browser dropdown.
+const QUALITY_OPTIONS: string[] = ['144p', 'LD', 'LD+', 'SD', 'SD+', 'HD', 'HD+', 'FHD', 'FHD+', 'QHD'];
+interface SelectorOption<T extends string | number> { value: T; label: string; }
+const FPS_OPTIONS: SelectorOption<number | 'unlimited'>[] = [
+  { value: 15, label: '15 FPS' },
+  { value: 30, label: '30 FPS' },
+  { value: 45, label: '45 FPS' },
+  { value: 60, label: '60 FPS' },
+  { value: 75, label: '75 FPS' },
+  { value: 90, label: '90 FPS' },
+  { value: 120, label: '120 FPS' },
+  { value: 144, label: '144 FPS' },
+  { value: 185, label: '185 FPS' },
+  { value: 240, label: '240 FPS' },
+  { value: 'unlimited', label: 'Unlimited' },
+];
+
 export default function SettingsModal() {
   const { settings, setSettings, ui, setShowSettings, saveGame, debug, activeDialogue, hudLayout, setHudElement, resetHudElement, resetHudLayout, setHudEditMode, returnToMenu, cheat, setCheatConsoleOpen } = useGameStore();
   const { tl } = useTranslation();
@@ -28,7 +46,7 @@ export default function SettingsModal() {
   const hasUnchangedSettings = (
     settings.cameraMode === settingsSnapshot.cameraMode &&
     settings.cameraSensitivity === settingsSnapshot.cameraSensitivity &&
-    settings.resolution === settingsSnapshot.resolution &&
+    settings.quality === settingsSnapshot.quality &&
     settings.fps === settingsSnapshot.fps &&
     settings.shadows === settingsSnapshot.shadows &&
     settings.debugMode === settingsSnapshot.debugMode &&
@@ -210,28 +228,39 @@ export default function SettingsModal() {
             <div className="space-y-4">
               {sectionTitle('Graphics')}
 
-              {/* Resolution Scale (P1.7 truthfulness): the renderer does not
-                  consume this setting yet — displayed as future functionality
-                  rather than a control that pretends to work. */}
-              <div className="space-y-2 opacity-60">
-                <label className="text-sm text-gray-300">Resolution Scale</label>
-                <select disabled value="" className={`${selectClass} cursor-not-allowed`}>
-                  <option value="">Not yet implemented</option>
-                </select>
+              {/* Quality (M1W4D1 #1): custom chip selector — no native
+                  <select>. Drives the composer's internal render resolution. */}
+              <div className="space-y-2">
+                <div className="flex justify-between items-center">
+                  <label className="text-sm text-gray-300">Quality</label>
+                  <span className="font-mono text-xs text-amber-300/80">{settings.quality}</span>
+                </div>
+                <OptionSelector
+                  options={QUALITY_OPTIONS.map((q) => ({ value: q, label: q }))}
+                  value={settings.quality}
+                  onChange={(value) => setSettings({ quality: value })}
+                />
                 <p className="text-xs text-gray-500">
-                  Planned: renderer resolution scaling for low-spec devices. This control currently has no runtime effect, so it is disabled here.
+                  Internal render resolution. Lower rungs render fewer pixels and raise the frame rate on low-spec devices.
                 </p>
               </div>
 
-              {/* FPS Target (P1.7 truthfulness): no frame limiter consumes
-                  this setting yet — represented as future functionality. */}
-              <div className="space-y-2 opacity-60">
-                <label className="text-sm text-gray-300">FPS Target</label>
-                <select disabled value="" className={`${selectClass} cursor-not-allowed`}>
-                  <option value="">Not yet implemented</option>
-                </select>
+              {/* FPS (M1W4D1 #1): custom chip selector. Caps the render loop
+                  only — gameplay, physics and input keep the full tick rate. */}
+              <div className="space-y-2">
+                <div className="flex justify-between items-center">
+                  <label className="text-sm text-gray-300">FPS</label>
+                  <span className="font-mono text-xs text-amber-300/80">
+                    {settings.fps === 'unlimited' ? 'Unlimited' : `${settings.fps} FPS`}
+                  </span>
+                </div>
+                <OptionSelector
+                  options={FPS_OPTIONS}
+                  value={settings.fps}
+                  onChange={(value) => setSettings({ fps: value })}
+                />
                 <p className="text-xs text-gray-500">
-                  Planned: an actual frame limiter. No runtime code constrains the frame rate today, so this control is disabled here.
+                  Caps how often the frame is rendered. Gameplay simulation, physics and input are unaffected.
                 </p>
               </div>
 
@@ -502,6 +531,43 @@ function ControlRow({ label, keys, description }: { label: string; keys: string;
           </kbd>
         ))}
       </div>
+    </div>
+  );
+}
+
+// ── M1W4D1 #1: Custom option selector ────────────────────────────────
+// A row of chip buttons, styled to match the modal's existing buttons. Click
+// and tap are the same onClick, so mouse and touch behave identically. Used by
+// both the Quality and FPS settings.
+function OptionSelector<T extends string | number>({
+  options,
+  value,
+  onChange,
+}: {
+  options: SelectorOption<T>[];
+  value: T;
+  onChange: (value: T) => void;
+}) {
+  return (
+    <div className="flex flex-wrap gap-2">
+      {options.map((option) => {
+        const selected = option.value === value;
+        return (
+          <button
+            key={String(option.value)}
+            type="button"
+            onClick={() => onChange(option.value)}
+            aria-pressed={selected}
+            className={`px-3 py-1.5 text-xs font-bold border rounded transition-all ${
+              selected
+                ? 'border-amber-500 bg-amber-500/10 text-amber-200'
+                : 'border-amber-900/60 bg-stone-800 text-stone-300 hover:border-amber-600 hover:text-amber-100'
+            }`}
+          >
+            {option.label}
+          </button>
+        );
+      })}
     </div>
   );
 }
