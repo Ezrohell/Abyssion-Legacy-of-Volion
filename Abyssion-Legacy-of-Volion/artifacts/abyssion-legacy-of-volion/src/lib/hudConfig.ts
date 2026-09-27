@@ -224,15 +224,16 @@ export const DEFAULT_HUD_LAYOUT: HudLayout = {
   // Top-centre controls: default y mirrors the previous `top: 6px` row — its
   // centre sits ~2% down the viewport at typical heights.
   topCenterControls: { visible: true, position: { x: 0.5,  y: 0.02 }, size: 100, opacity: 100 },
-  // Skill slots (M1W4D1 #5): the old single `skillBar` is split into five
-  // independently editable elements. y 0.80 reproduces the previous
-  // bottom-anchored `clamp(72px, 15dvh + 32px, 280px)` row; x spreads the five
-  // slot centres left-to-right around the old bar centre (0.5) in 0.04 steps.
-  skillZ:          { visible: true, position: { x: 0.42, y: 0.80 }, size: 100, opacity: 100 },
-  skillX:          { visible: true, position: { x: 0.46, y: 0.80 }, size: 100, opacity: 100 },
-  skillC:          { visible: true, position: { x: 0.50, y: 0.80 }, size: 100, opacity: 100 },
-  skillV:          { visible: true, position: { x: 0.54, y: 0.80 }, size: 100, opacity: 100 },
-  skillF:          { visible: true, position: { x: 0.58, y: 0.80 }, size: 100, opacity: 100 },
+  // Skill slots (M1W4D1 #5; respaced M1W4D1 #3 C2): the old single `skillBar`
+  // is five independently editable elements. Each slot carries a button AND a
+  // name, so the original 0.04 spacing overlapped and the names were
+  // unreadable. x now spreads the five centres 0.10 apart around 0.5; y drops
+  // to 0.72 so the row clears the hotbar.
+  skillZ:          { visible: true, position: { x: 0.30, y: 0.72 }, size: 100, opacity: 100 },
+  skillX:          { visible: true, position: { x: 0.40, y: 0.72 }, size: 100, opacity: 100 },
+  skillC:          { visible: true, position: { x: 0.50, y: 0.72 }, size: 100, opacity: 100 },
+  skillV:          { visible: true, position: { x: 0.60, y: 0.72 }, size: 100, opacity: 100 },
+  skillF:          { visible: true, position: { x: 0.70, y: 0.72 }, size: 100, opacity: 100 },
   // Mobile weapon skill stack: the whole per-weapon button column is ONE
   // element. Defaults reproduce the previous hardcoded
   // `right: 16px; bottom: calc(safe-area-inset-bottom + 150px)` placement on a
@@ -243,11 +244,9 @@ export const DEFAULT_HUD_LAYOUT: HudLayout = {
   // Bottom-aligning inside a fixed-height box keeps the stack's bottom edge at
   // the same place for every weapon (2-button and 5-button stacks alike).
   mobileSkillButtons: { visible: true, position: { x: 0.966, y: 0.569 }, size: 100, opacity: 100 },
-  // Desktop hotbar: reproduces `bottom-4 left-1/2` on a 16:9 viewport — centred
-  // horizontally, row box 66px tall, so y = 720 - 16 - 33 = 671 -> 0.932.
-  // M1W4D1 F — raised from 0.932 so the hotbar sits above the mobile control
-  // band (joystick / action buttons / skill row at ~0.80).
-  desktopHotbar:   { visible: true, position: { x: 0.5,  y: 0.78 }, size: 100, opacity: 100 },
+  // Desktop hotbar: centred horizontally. M1W4D1 F raised it from 0.932;
+  // M1W4D1 #3 C2 set 0.82 so it clears the respaced skill row at 0.72.
+  desktopHotbar:   { visible: true, position: { x: 0.5,  y: 0.82 }, size: 100, opacity: 100 },
   interactPrompt:  { visible: true, position: { x: 0.5,  y: 0.85 }, size: 100, opacity: 100 },
   bossBar:         { visible: true, position: { x: 0.5,  y: 0.88 }, size: 100, opacity: 100 },
   deathOverlay:    { visible: true, position: { x: 0.5,  y: 0.5  }, size: 100, opacity: 100 },
@@ -422,6 +421,27 @@ export function migrateHudLayout(saved: unknown): HudLayout {
     if (savedLayout[id]) {
       result[id] = extractConfig(savedLayout[id], DEFAULT_HUD_LAYOUT[id]);
     }
+  }
+
+  // M1W4D1 #3 C3 — one-time de-overlap for the five skill slots. C2 widened the
+  // defaults to 0.30..0.70, but `migrateHudLayout` only applies defaults when no
+  // saved value exists, so a save written before C2 kept the old tight cluster
+  // (x 0.42/0.46/0.50/0.54/0.58, y 0.80) and the slots overlapped. This is a
+  // value-based check (no schema bump): replace the five positions only when ALL
+  // five still match that exact cluster. Any manually dragged slot makes the
+  // check fail, so a custom layout is preserved. No other element is touched.
+  const TIGHT_SKILL_CLUSTER: HudPosition[] = [
+    { x: 0.42, y: 0.80 }, { x: 0.46, y: 0.80 }, { x: 0.50, y: 0.80 },
+    { x: 0.54, y: 0.80 }, { x: 0.58, y: 0.80 },
+  ];
+  const skillIds: HudElementId[] = ['skillZ', 'skillX', 'skillC', 'skillV', 'skillF'];
+  const isTightSkillCluster = skillIds.every((id, i) => {
+    const p = result[id].position;
+    return Math.abs(p.x - TIGHT_SKILL_CLUSTER[i].x) <= 0.005
+      && Math.abs(p.y - TIGHT_SKILL_CLUSTER[i].y) <= 0.005;
+  });
+  if (isTightSkillCluster) {
+    for (const id of skillIds) result[id] = { ...DEFAULT_HUD_LAYOUT[id] };
   }
 
   return result;

@@ -189,6 +189,11 @@ interface GameState {
      *  part of Custom HUD. Persisted with the other settings; the save schema
      *  version is not bumped (a missing field defaults to false). */
     fMode: boolean;
+    /** M1W4D1 #3 B1 — transient NPC-interaction diagnostic panel
+     *  (top-centre, shown for 3 s on each E press). Default true so it appears
+     *  on the next load; set false to hide. Extends `settings` without a save
+     *  schema bump — a missing field defaults to true on load. */
+    npcDebug: boolean;
     language: 'en' | 'id';
   };
   hudLayout: HudLayout;
@@ -687,6 +692,7 @@ function migrateLegacySaveIfNeeded(): { records: unknown[]; validContainer: bool
       cameraSensitivity: 1.0,
       debugMode: false,
       fMode: false,
+      npcDebug: true,
       language: 'en',
     };
     writeGlobalConfig(
@@ -828,6 +834,7 @@ export const useGameStore = create<GameState>((set, get) => ({
     cameraSensitivity: 1.0,
     debugMode: false,
     fMode: false,
+    npcDebug: true,
     language: 'en',
     ...initialPersistence.globalConfig.settings,
   },

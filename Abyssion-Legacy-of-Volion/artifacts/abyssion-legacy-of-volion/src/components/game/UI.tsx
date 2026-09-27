@@ -2,13 +2,14 @@
 
 import { useGameStore } from '@/lib/store';
 import { HUD_CONFIG as H, SKILL_SLOT_KEYS, SkillSlotKey } from '@/lib/hudConfig';
-import { Settings, Backpack, Shield, Box, Terminal } from 'lucide-react';
+import { Settings, Backpack, Shield, Box, Terminal, Sword, Crosshair, FlaskConical, Zap, Swords } from 'lucide-react';
 import { getItem, getAllItems, weaponCategoryOf } from '@/lib/items';
-import { SWORD_SKILLS } from '@/lib/swordSkills';
-import { WATER_STAFF_SKILLS } from '@/lib/staffSkills';
-import { M1887_SKILLS, DAGGER_SKILLS } from '@/lib/weaponContent';
-import { CROSSBOW_SKILLS, CROSSBOW_CONFIG } from '@/lib/crossbowContent';
-import { RESONANCE_SKILLS } from '@/lib/weaponContent';
+import { npcPositionCache, NPC_INTERACT_RANGE } from './InteractionManager';
+import { SWORD_SKILLS, SWORD_SKILL_COOLDOWNS } from '@/lib/swordSkills';
+import { WATER_STAFF_SKILLS, SKILL_COOLDOWNS as STAFF_SKILL_COOLDOWNS } from '@/lib/staffSkills';
+import { M1887_SKILLS, DAGGER_SKILLS, M1887_SKILL_COOLDOWNS, DAGGER_SKILL_COOLDOWNS, RESONANCE_SKILLS, RESONANCE_SKILL_COOLDOWNS } from '@/lib/weaponContent';
+import { CROSSBOW_SKILLS, CROSSBOW_CONFIG, CROSSBOW_SKILL_COOLDOWNS } from '@/lib/crossbowContent';
+import { SKILL_UNLOCK_LEVELS } from '@/lib/progression';
 import { getItemCount } from '@/lib/inventory';
 import { useEffect, useRef, useState, useCallback } from 'react';
 import { t } from '@/lib/translations';
@@ -38,9 +39,62 @@ function isInsideStage(clientX: number, clientY: number): boolean {
   return clientY >= top && clientY <= top + height;
 }
 
-/** Skill bar (P9): KEY + NAME + LOCKED state + COOLDOWN for the currently
- *  equipped weapon/Core. Derives from the same authoritative hotbar state as
- *  combat, and from the transient skillState the combat loop reports to. */
+/** M1W4D1 #3 C4 — full detail for one skill id, read from the authoritative
+ *  per-weapon table. Missing values stay null (rendered as "—"); nothing is
+ *  fabricated. */
+type SkillTipDetail = {
+  name: string;
+  cooldown: number | null;
+  damage: number | null;
+  description: string | null;
+};
+function skillDetailFor(itemId: string | null, skillId: string): SkillTipDetail | null {
+  if (!itemId || !skillId) return null;
+  if (itemId === 'water_staff') {
+    const s = WATER_STAFF_SKILLS.find((k) => k.id === skillId);
+    return s ? { name: s.name, cooldown: STAFF_SKILL_COOLDOWNS[s.id] ?? null, damage: s.damage, description: null } : null;
+  }
+  if (itemId === 'm1887') {
+    const s = M1887_SKILLS.find((k) => k.id === skillId);
+    return s ? { name: s.name, cooldown: M1887_SKILL_COOLDOWNS[s.id] ?? null, damage: null, description: s.description } : null;
+  }
+  if (itemId === 'crossbow') {
+    const s = CROSSBOW_SKILLS.find((k) => k.id === skillId);
+    return s ? { name: s.name, cooldown: CROSSBOW_SKILL_COOLDOWNS[s.id] ?? null, damage: null, description: s.description } : null;
+  }
+  if (itemId === 'dual_dagger') {
+    const s = DAGGER_SKILLS.find((k) => k.id === skillId);
+    return s ? { name: s.name, cooldown: DAGGER_SKILL_COOLDOWNS[s.id] ?? null, damage: null, description: s.description } : null;
+  }
+  if (itemId === 'resonance_core') {
+    const s = RESONANCE_SKILLS.find((k) => k.id === skillId);
+    return s ? { name: s.name, cooldown: s.cooldown, damage: s.damage ?? null, description: s.description } : null;
+  }
+  const s = SWORD_SKILLS.find((k) => k.id === skillId);
+  return s ? { name: s.name, cooldown: SWORD_SKILL_COOLDOWNS[s.id] ?? null, damage: s.aoeDamage ?? null, description: null } : null;
+}
+
+/** M1W4D1 #3 C4 — a small per-weapon glyph for the icon-only slot. No skill
+ *  table carries a per-skill icon field, so the slot shows its weapon family's
+ *  glyph (recorded as a deviation from "the skill icon"). */
+function skillGlyphFor(itemId: string | null) {
+  if (itemId === 'water_staff') return FlaskConical;
+  if (itemId === 'resonance_core') return Zap;
+  if (itemId === 'dual_dagger') return Swords;
+  if (itemId === 'm1887' || itemId === 'crossbow') return Crosshair;
+  return Sword;
+}
+
+/** M1W4D1 #3 C4 — fully resolved data for the transient skill tooltip. Carries
+ *  the slot it belongs to plus its unlock gate; still read-only from the skill
+ *  tables (nothing fabricated). */
+type SkillTipData = SkillTipDetail & { slotKey: string; locked: boolean; requiredLevel: number };
+
+/** Skill bar (P9): slot KEY + ICON + LOCKED state + COOLDOWN for the currently
+ *  equipped weapon/Core. The skill NAME was removed from the HUD in M1W4D1 #3
+ *  C4 (it overlapped); full detail is shown in the transient tooltip instead.
+ *  Derives from the same authoritative hotbar state as combat, and from the
+ *  transient skillState the combat loop reports to. */
 export function SkillBar({ preview = false, slot, showAmmo = false }: { preview?: boolean; slot?: SkillSlotKey; showAmmo?: boolean } = {}) {
   const hotbar = useGameStore((s) => s.hotbar);
   const archetype = useGameStore((s) => s.player.archetype);
@@ -139,6 +193,67 @@ export function SkillBar({ preview = false, slot, showAmmo = false }: { preview?
     timers.set(action, release);
   };
 
+  // M1W4D1 #3 C4 — transient skill detail panel state. Local only: the store is
+  // never touched, and there is no per-frame work (the panel is a plain DOM
+  // element, positioned once with CSS relative to its slot).
+  const [tip, setTip] = useState<SkillTipData | null>(null);
+  const tipTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const pressTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const pressOrigin = useRef<{ x: number; y: number } | null>(null);
+  const clearPressTimer = () => {
+    if (pressTimer.current) {
+      clearTimeout(pressTimer.current);
+      pressTimer.current = null;
+    }
+  };
+  const closeTip = () => {
+    if (tipTimer.current) {
+      clearTimeout(tipTimer.current);
+      tipTimer.current = null;
+    }
+    setTip(null);
+  };
+  // Re-armed on open and on every pointer move over the slot, so the panel
+  // dismisses after 3 s of inactivity (desktop idle / mobile long-press).
+  const armTipTimeout = () => {
+    if (tipTimer.current) clearTimeout(tipTimer.current);
+    tipTimer.current = setTimeout(() => setTip(null), 3000);
+  };
+  const openTip = (skId: string, skKey: string, actionIndex: number | null, unlocked: boolean) => {
+    if (!itemId || !skId) return;
+    const detail = skillDetailFor(itemId, skId);
+    if (!detail) return;
+    const index = actionIndex ?? 0;
+    const requiredLevel = SKILL_UNLOCK_LEVELS[Math.min(index, SKILL_UNLOCK_LEVELS.length - 1)] ?? 1;
+    setTip({ ...detail, slotKey: skKey, locked: !unlocked, requiredLevel });
+    armTipTimeout();
+  };
+  useEffect(() => () => {
+    if (tipTimer.current) clearTimeout(tipTimer.current);
+    if (pressTimer.current) clearTimeout(pressTimer.current);
+  }, []);
+  // Dismiss on Escape or on a tap/click elsewhere. One instance at a time: a
+  // pointerdown anywhere closes whichever slot's panel is open.
+  useEffect(() => {
+    if (!tip) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        if (tipTimer.current) clearTimeout(tipTimer.current);
+        setTip(null);
+      }
+    };
+    const onDown = () => {
+      if (tipTimer.current) clearTimeout(tipTimer.current);
+      setTip(null);
+    };
+    window.addEventListener('keydown', onKey);
+    window.addEventListener('pointerdown', onDown, true);
+    return () => {
+      window.removeEventListener('keydown', onKey);
+      window.removeEventListener('pointerdown', onDown, true);
+    };
+  }, [tip]);
+
   // Bottom anchor (M1W2D3 #1 WS1): viewport-aware, replacing the fixed 78px.
   // The interact-prompt / boss-bar band is viewport-proportional (85% / 88% of
   // the height), so a fixed px offset collided with it once the viewport got
@@ -156,7 +271,7 @@ export function SkillBar({ preview = false, slot, showAmmo = false }: { preview?
   if (slot && rows.length === 0 && !renderAmmo) return null;
 
   return (
-    <div className="flex items-center gap-2" style={{ pointerEvents: 'none' }}>
+    <div className="relative flex items-center gap-2" style={{ pointerEvents: 'none' }}>
       {rows.map((sk) => {
         const hasSkill = sk.actionIndex !== null && itemId !== null;
         const unlocked = hasSkill && itemId !== null ? isItemSkillUnlocked(itemId, sk.actionIndex as number) : false;
@@ -164,13 +279,40 @@ export function SkillBar({ preview = false, slot, showAmmo = false }: { preview?
         // bar can never show a skill as ready while gameplay still blocks it.
         const cd = sk.id ? (skillState.cooldowns[sk.id] ?? 0) : 0;
         const interactive = hasSkill && unlocked;
+        // M1W4D1 #3 C4 — the skill NAME is gone from the HUD (it overlapped);
+        // the slot shows key + icon + cooldown + locked dim. Real skill slots
+        // (locked included) accept pointer events so the hover/long-press
+        // tooltip can surface their lock state; activation stays gated.
+        const canHover = hasSkill && !preview;
+        const Glyph = skillGlyphFor(itemId);
         return (
           <button
             key={sk.key}
             type="button"
-            disabled={!interactive}
-            onPointerDown={(e) => { e.stopPropagation(); if (interactive) activateSkill(sk.actionIndex as number); }}
-            className={`flex items-center gap-2 border px-3 py-1.5 ${interactive && !preview ? 'pointer-events-auto cursor-pointer active:bg-white/10' : 'pointer-events-none cursor-default'}`}
+            aria-disabled={!interactive}
+            onPointerEnter={(e) => { if (e.pointerType !== 'touch') openTip(sk.id, sk.key, sk.actionIndex, unlocked); }}
+            onPointerLeave={closeTip}
+            onPointerMove={(e) => {
+              if (tip) armTipTimeout();
+              if (pressTimer.current && pressOrigin.current && (Math.abs(e.clientX - pressOrigin.current.x) > 10 || Math.abs(e.clientY - pressOrigin.current.y) > 10)) {
+                clearPressTimer();
+              }
+            }}
+            onPointerDown={(e) => {
+              e.stopPropagation();
+              if (interactive) activateSkill(sk.actionIndex as number);
+              if (e.pointerType === 'touch' && canHover) {
+                pressOrigin.current = { x: e.clientX, y: e.clientY };
+                clearPressTimer();
+                pressTimer.current = setTimeout(() => {
+                  pressTimer.current = null;
+                  openTip(sk.id, sk.key, sk.actionIndex, unlocked);
+                }, 400);
+              }
+            }}
+            onPointerUp={(e) => { clearPressTimer(); if (e.pointerType === 'touch') closeTip(); }}
+            onPointerCancel={() => { clearPressTimer(); closeTip(); }}
+            className={`flex items-center gap-2 border px-3 py-1.5 ${canHover ? 'pointer-events-auto' : 'pointer-events-none'} ${interactive && !preview ? 'cursor-pointer active:bg-white/10' : 'cursor-default'}`}
             style={{
               background: !hasSkill ? 'rgba(10,10,10,0.4)' : unlocked ? 'rgba(20,16,8,0.85)' : 'rgba(10,10,10,0.7)',
               borderColor: !hasSkill ? 'rgba(90,90,90,0.2)' : unlocked ? 'rgba(214,138,49,0.55)' : 'rgba(120,120,120,0.25)',
@@ -178,15 +320,42 @@ export function SkillBar({ preview = false, slot, showAmmo = false }: { preview?
             }}
           >
             <span className="text-sm font-black" style={{ color: unlocked ? '#e8d5ae' : '#777' }}>{sk.key}</span>
-            <span className="text-xs font-semibold tracking-wide" style={{ color: !hasSkill ? '#555' : unlocked ? '#d68a31' : '#666' }}>
-              {!hasSkill ? '—' : unlocked ? sk.name : `${sk.name} (locked)`}
-            </span>
+            {hasSkill ? (
+              <Glyph size={16} style={{ color: unlocked ? '#d68a31' : '#666' }} />
+            ) : (
+              <span className="text-xs font-semibold" style={{ color: '#555' }}>—</span>
+            )}
             {interactive && cd > 0 && (
               <span className="text-xs font-bold" style={{ color: '#f87171' }}>{cd.toFixed(1)}s</span>
             )}
           </button>
         );
       })}
+      {/* M1W4D1 #3 C4 — transient skill detail panel, one per bar. Anchored
+          above the slot, pointer-events: none so it never blocks gameplay. */}
+      {tip && !preview && (
+        <div
+          className="absolute left-1/2 bottom-full mb-2 z-40 w-max max-w-[220px] -translate-x-1/2 border px-3 py-2 text-left shadow-lg"
+          style={{
+            pointerEvents: 'none',
+            background: 'rgba(10,8,6,0.95)',
+            borderColor: 'rgba(214,138,49,0.55)',
+            backdropFilter: 'blur(4px)',
+          }}
+        >
+          <div className="text-xs font-bold tracking-wide" style={{ color: '#f0c884' }}>{tip.name}</div>
+          <div className="mt-1 text-[11px] font-semibold" style={{ color: '#c9b48a' }}>
+            Cooldown: {tip.cooldown !== null ? `${tip.cooldown}s` : '—'}
+          </div>
+          <div className="text-[11px] font-semibold" style={{ color: '#c9b48a' }}>
+            Damage: {tip.damage !== null ? tip.damage : '—'}
+          </div>
+          <div className="mt-1 text-[11px]" style={{ color: '#a89878' }}>{tip.description ?? '—'}</div>
+          <div className="mt-1 text-[11px] font-semibold" style={{ color: tip.locked ? '#f87171' : '#22c55e' }}>
+            {tip.locked ? `Locked: level ${tip.requiredLevel} required` : 'Unlocked'}
+          </div>
+        </div>
+      )}
       {renderAmmo && showGunPill && (
         <div className="flex items-center gap-1.5 border px-3 py-1.5" style={{ background: 'rgba(20,16,8,0.85)', borderColor: 'rgba(214,138,49,0.55)' }}>
           <span className="text-xs font-bold tracking-wide" style={{ color: gunAmmo > 0 ? '#d68a31' : '#f87171' }}>
@@ -349,6 +518,14 @@ export default function UI() {
       hotbar.slots[hotbar.selectedSlot] === 'wooden_sword') &&
     archetype === 'fighter';
   const [isMobile, setIsMobile] = useState(false);
+  // M1W4D1 #3 B1 — transient NPC-interaction diagnostic (top-centre panel).
+  // Snapshot state captured ONLY on an E press (no per-frame work), gated by
+  // the persisted settings.npcDebug flag. Remove once the chain is diagnosed.
+  const [npcDebugReadout, setNpcDebugReadout] = useState<string[] | null>(null);
+  const npcDebugTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => () => {
+    if (npcDebugTimerRef.current) clearTimeout(npcDebugTimerRef.current);
+  }, []);
 
   useEffect(() => {
     const checkMobile = () => setIsMobile(window.innerWidth <= 1024 || 'ontouchstart' in window);
@@ -608,6 +785,30 @@ export default function UI() {
         s.setShowQuestLog(false);
         return;
       }
+      // M1W4D1 #3 B1 — NPC interaction diagnostic. Captures the whole pipeline
+      // state SYNCHRONOUSLY on every E press (before the interaction clears
+      // nearestNpcId) and shows it for 3 s. Gated by settings.npcDebug; no
+      // console logging, no per-frame work — this branch only runs on a press.
+      if (!e.repeat && (e.key === 'e' || e.key === 'E') && useGameStore.getState().settings.npcDebug) {
+        const nearestNpcPos = s.ui.nearestNpcId ? npcPositionCache.get(s.ui.nearestNpcId) : undefined;
+        const p = s.player.position;
+        const dist = nearestNpcPos
+          ? Math.hypot(p[0] - nearestNpcPos.x, p[1] - nearestNpcPos.y, p[2] - nearestNpcPos.z)
+          : null;
+        setNpcDebugReadout([
+          'E pressed',
+          `uiBlocked: ${!!uiBlocked}`,
+          `nearestNpcId: ${s.ui.nearestNpcId ?? '—'}`,
+          `nearestCheckpointPos: ${s.ui.nearestCheckpointPos ? s.ui.nearestCheckpointPos.map((n) => n.toFixed(1)).join(', ') : '—'}`,
+          `activeDialogue: ${s.activeDialogue ? 'open' : '—'}`,
+          `npcCache size: ${npcPositionCache.size}`,
+          `distance to nearest: ${dist !== null ? dist.toFixed(2) : '—'}u`,
+          `interact range: ${NPC_INTERACT_RANGE}u`,
+        ]);
+        if (npcDebugTimerRef.current) clearTimeout(npcDebugTimerRef.current);
+        npcDebugTimerRef.current = setTimeout(() => setNpcDebugReadout(null), 3000);
+      }
+
       if (uiBlocked) return;
 
       // ── Hidden movement-combination cheatcodes ───────────────────────
@@ -1032,6 +1233,23 @@ export default function UI() {
       {useGameStore.getState().cheat.active && (
         <div className="fixed top-2 left-2 z-50 px-2 py-1 bg-yellow-500/20 border border-yellow-500/40 rounded text-yellow-300 text-xs font-bold animate-pulse">
           ⚡ CHEAT ACTIVE
+        </div>
+      )}
+
+      {/* M1W4D1 #3 B1 — transient NPC-interaction diagnostic (top-centre).
+          Shown for 3 s on each E press; gate: settings.npcDebug. Pure reader —
+          pointer-events none, no per-frame work, no console output. */}
+      {npcDebugReadout && (
+        <div
+          className="fixed top-2 left-1/2 -translate-x-1/2 z-[60] pointer-events-none select-none rounded border px-3 py-2 font-mono text-[11px] leading-tight whitespace-pre text-left"
+          style={{
+            background: 'rgba(8,8,12,0.92)',
+            borderColor: 'rgba(214,138,49,0.6)',
+            color: '#e8d5ae',
+            boxShadow: '0 6px 20px rgba(0,0,0,0.55)',
+          }}
+        >
+          {npcDebugReadout.join('\n')}
         </div>
       )}
     </div>

@@ -24,7 +24,9 @@ import type { Lang } from '@/lib/translations';
  * The closest interactable wins, regardless of type.
  */
 
-const NPC_INTERACT_RANGE = 4.0;
+// Exported (M1W4D1 #3 B1) so the transient NPC-interaction diagnostic can
+// report the live interaction range without duplicating the constant.
+export const NPC_INTERACT_RANGE = 4.0;
 const CHECKPOINT_INTERACT_RANGE = 3.5;
 
 // Lightweight NPC position cache - NPCs write their positions here each frame.
