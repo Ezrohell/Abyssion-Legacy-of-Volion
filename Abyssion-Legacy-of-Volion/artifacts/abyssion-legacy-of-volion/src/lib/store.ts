@@ -200,6 +200,9 @@ interface GameState {
   /** M1W4D1 #5 — when true, editing any of the five Z/X/C/V/F skill slots
    *  moves/resizes/toggles all five together. Default false (independent). */
   skillCombine: boolean;
+  /** M2 #2 C1 — persisted inventory-panel geometry (global, not per-slot).
+   *  Null = the modal uses its defaults (50vw × 70vh, centred). */
+  inventoryPanelLayout: InventoryPanelLayout | null;
   hudEditMode: boolean;
   /** Manual skill HUD configuration (C3): per-item skill entries the SkillBar
    *  renders. Gameplay routing remains authoritative in Player.tsx. */
@@ -302,6 +305,8 @@ interface GameState {
   setHudLayout: (layout: Partial<HudLayout>) => void;
   /** M1W4D1 #5 — toggles the five-slot combine mode. Persisted with hudLayout. */
   setSkillCombine: (value: boolean) => void;
+  /** M2 #2 C1 — set (or clear) the persisted inventory-panel geometry. */
+  setInventoryPanelLayout: (layout: InventoryPanelLayout | null) => void;
   setHudElement: (id: HudElementId, config: Partial<HudElementConfig>) => void;
   resetHudElement: (id: HudElementId) => void;
   resetHudLayout: () => void;
@@ -609,7 +614,31 @@ function persistActiveSlot(slotId: SaveSlotId) {
   getStorage()?.setItem(ACTIVE_SLOT_KEY, String(slotId));
 }
 
-function readGlobalConfig(): { settings?: UnknownRecord; hudLayout?: unknown; skillHudConfig?: unknown; skillCombine?: boolean } {
+/** M2 #2 C1 — persisted geometry of the inventory panel. Global (not
+ *  per-save-slot), stored as an additive key in the global config.
+ *  Null = use the built-in defaults (50vw × 70vh, centred). */
+export interface InventoryPanelLayout {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+}
+
+/** Only a fully-finite numeric {x,y,w,h} is accepted; anything else (a legacy
+ *  save, a malformed value, a missing key) reads as null so the caller falls
+ *  back to the defaults. */
+function normalizeInventoryPanelLayout(value: unknown): InventoryPanelLayout | null {
+  if (!isRecord(value)) return null;
+  const { x, y, w, h } = value;
+  if (
+    typeof x !== 'number' || typeof y !== 'number' ||
+    typeof w !== 'number' || typeof h !== 'number' ||
+    !Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(w) || !Number.isFinite(h)
+  ) return null;
+  return { x, y, w, h };
+}
+
+function readGlobalConfig(): { settings?: UnknownRecord; hudLayout?: unknown; skillHudConfig?: unknown; skillCombine?: boolean; inventoryPanelLayout?: unknown } {
   const parsed = parseStorageValue(getStorage()?.getItem(GLOBAL_CONFIG_KEY) ?? null);
   if (!isRecord(parsed)) return {};
   return {
@@ -617,14 +646,15 @@ function readGlobalConfig(): { settings?: UnknownRecord; hudLayout?: unknown; sk
     hudLayout: parsed.hudLayout,
     skillHudConfig: isRecord(parsed.skillHudConfig) ? (parsed.skillHudConfig as SkillHudConfig) : undefined,
     skillCombine: typeof parsed.skillCombine === 'boolean' ? parsed.skillCombine : undefined,
+    inventoryPanelLayout: parsed.inventoryPanelLayout,
   };
 }
 
-function writeGlobalConfig(settings: GameState['settings'], hudLayout: HudLayout, skillHudConfig: SkillHudConfig, skillCombine: boolean) {
+function writeGlobalConfig(settings: GameState['settings'], hudLayout: HudLayout, skillHudConfig: SkillHudConfig, skillCombine: boolean, inventoryPanelLayout: InventoryPanelLayout | null) {
   const storage = getStorage();
   if (!storage) return;
   try {
-    storage.setItem(GLOBAL_CONFIG_KEY, JSON.stringify({ settings, hudLayout, skillHudConfig, skillCombine }));
+    storage.setItem(GLOBAL_CONFIG_KEY, JSON.stringify({ settings, hudLayout, skillHudConfig, skillCombine, inventoryPanelLayout }));
   } catch (error) {
     console.error('Failed to save global game configuration', error);
   }
@@ -702,6 +732,7 @@ function migrateLegacySaveIfNeeded(): { records: unknown[]; validContainer: bool
         : migrateHudLayout(existingConfig.hudLayout),
       {},
       existingConfig.skillCombine ?? false,
+      normalizeInventoryPanelLayout(existingConfig.inventoryPanelLayout),
     );
   }
 
@@ -842,6 +873,7 @@ export const useGameStore = create<GameState>((set, get) => ({
     ? { ...DEFAULT_HUD_LAYOUT }
     : migrateHudLayout(initialPersistence.globalConfig.hudLayout),
   skillCombine: initialPersistence.globalConfig.skillCombine ?? false,
+  inventoryPanelLayout: normalizeInventoryPanelLayout(initialPersistence.globalConfig.inventoryPanelLayout),
   hudEditMode: false,
   skillHudConfig: (initialPersistence.globalConfig.skillHudConfig ?? {}) as SkillHudConfig,
   houseInterior: null,
@@ -1225,6 +1257,7 @@ export const useGameStore = create<GameState>((set, get) => ({
   setSettings: (newSettings) => set((state) => ({ settings: { ...state.settings, ...newSettings } })),
   setHudLayout: (partial) => set((state) => ({ hudLayout: { ...state.hudLayout, ...partial } })),
   setSkillCombine: (value) => set({ skillCombine: value }),
+  setInventoryPanelLayout: (layout) => set({ inventoryPanelLayout: layout }),
   setHudElement: (id, config) => set((state) => ({
     hudLayout: { ...state.hudLayout, [id]: { ...state.hudLayout[id], ...config } },
   })),
@@ -1265,6 +1298,7 @@ export const useGameStore = create<GameState>((set, get) => ({
         ? state.hudLayout
         : migrateHudLayout(globalConfig.hudLayout),
       skillCombine: globalConfig.skillCombine ?? state.skillCombine,
+      inventoryPanelLayout: normalizeInventoryPanelLayout(globalConfig.inventoryPanelLayout),
     }));
   },
   // Dynamic save-state list: append a new empty state (unbounded).
@@ -2181,7 +2215,7 @@ export const useGameStore = create<GameState>((set, get) => ({
     if (!writeSlotRecords(nextRecords)) return;
 
     persistActiveSlot(state.activeSlot);
-    writeGlobalConfig(state.settings, state.hudLayout, state.skillHudConfig, state.skillCombine);
+    writeGlobalConfig(state.settings, state.hudLayout, state.skillHudConfig, state.skillCombine, state.inventoryPanelLayout);
     const updatedSlots = readSlotRecords();
     set({
       saveSlots: getSaveSlotSummaries(updatedSlots.records, updatedSlots.validContainer),
@@ -2389,6 +2423,7 @@ export const useGameStore = create<GameState>((set, get) => ({
           ? migrateHudLayout(legacyHudLayout)
           : state.hudLayout,
       skillCombine: globalConfig.skillCombine ?? state.skillCombine,
+      inventoryPanelLayout: normalizeInventoryPanelLayout(globalConfig.inventoryPanelLayout),
       quests: safeQuests,
       completedQuestIds: Array.isArray(parsed.completedQuestIds) ? parsed.completedQuestIds : [],
       encounterDefeats: Array.isArray(parsed.encounterDefeats) ? parsed.encounterDefeats : [],

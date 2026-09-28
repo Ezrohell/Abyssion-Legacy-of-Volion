@@ -1,6 +1,7 @@
 'use client';
 
 import { useGameStore } from '@/lib/store';
+import type { InventoryPanelLayout } from '@/lib/store';
 import { getItem, RARITY_COLORS, ItemDef, ItemType, ArmourSlot, armourSlotOf } from '@/lib/items';
 import {
   splitStack,
@@ -13,7 +14,7 @@ import {
   SortMode,
   CATEGORY_META,
 } from '@/lib/inventory';
-import { X, Search, ChevronDown, ArrowUpDown, Package } from 'lucide-react';
+import { X, Search, ChevronDown, ArrowUpDown, Package, RotateCcw, Save } from 'lucide-react';
 import { Canvas } from '@react-three/fiber';
 import { weaponCategoryOf, isRangedCategory } from '@/lib/items';
 import * as LucideIcons from 'lucide-react';
@@ -65,6 +66,11 @@ const RARITY_GLOW: Record<string, string> = {
   epic: 'shadow-[0_0_10px_rgba(168,85,247,0.4)]',
   legendary: 'shadow-[0_0_12px_rgba(245,158,11,0.5)]',
 };
+
+/** M2 #1 C1 — inventory-panel resize limits (px) and viewport gutter. */
+const PANEL_MIN_W = 480;
+const PANEL_MIN_H = 360;
+const PANEL_GUTTER = 32;
 
 type IconType = React.ComponentType<{ size?: number; className?: string }>;
 
@@ -312,11 +318,30 @@ export default function InventoryModal() {
   // refines to. Reset on open, never persisted to the store.
   const [fightingOpen, setFightingOpen] = useState(false);
   const [fightingBranch, setFightingBranch] = useState<FightingBranch | null>(null);
+  // M2 #1 C1 — panel geometry. null = built-in defaults (50vw × 70vh, centred).
+  const [panelGeometry, setPanelGeometry] = useState<InventoryPanelLayout | null>(null);
+  const [unsavedGeometry, setUnsavedGeometry] = useState(false);
+  const [showDiscardConfirm, setShowDiscardConfirm] = useState(false);
 
   const longPressTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const longPressFired = useRef(false);
   const touchStartPos = useRef<{ x: number; y: number } | null>(null);
   const closeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // M2 #1 C1 — single mutable ref for the in-flight resize drag: no per-move
+  // allocation, and the listeners live on the captured edge element only.
+  const resizeState = useRef<{
+    edge: 'right' | 'bottom';
+    pointerId: number;
+    el: Element;
+    startX: number;
+    startY: number;
+    startW: number;
+    startH: number;
+    x: number;
+    y: number;
+  } | null>(null);
+  const panelRef = useRef<HTMLDivElement | null>(null);
+  const setInventoryPanelLayout = useGameStore((s) => s.setInventoryPanelLayout);
 
   const open = ui.showInventory;
 
@@ -334,6 +359,11 @@ export default function InventoryModal() {
       // BUG-010: the nav's disclosure/sub-branch are per-open UI state.
       setFightingOpen(false);
       setFightingBranch(null);
+      // M2 #1 C1 — load persisted geometry (null = defaults). Read through
+      // getState so the effect stays keyed on `open` alone.
+      setPanelGeometry(useGameStore.getState().inventoryPanelLayout);
+      setUnsavedGeometry(false);
+      setShowDiscardConfirm(false);
     }
   }, [open]);
 
@@ -345,6 +375,12 @@ export default function InventoryModal() {
       clearTimeout(closeTimerRef.current);
       closeTimerRef.current = null;
     }
+    // M2 #1 C1 — release any pointer capture still held by an in-flight resize.
+    const rs = resizeState.current;
+    if (rs) {
+      try { rs.el.releasePointerCapture(rs.pointerId); } catch { /* already released */ }
+      resizeState.current = null;
+    }
   }, []);
 
   const handleClose = useCallback(() => {
@@ -355,6 +391,9 @@ export default function InventoryModal() {
       setSplitState(null);
       setTooltip(null);
       setSortMenuOpen(false);
+      setPanelGeometry(null);
+      setUnsavedGeometry(false);
+      setShowDiscardConfirm(false);
     }, 200);
   }, [setShowInventory]);
 
@@ -503,6 +542,85 @@ export default function InventoryModal() {
     setCollapsed((prev) => ({ ...prev, [cat]: !prev[cat] }));
   };
 
+  // ── M2 #1 C1 — panel geometry: revert / save / close-confirm / resize ──
+  const handleRevertGeometry = useCallback(() => {
+    setPanelGeometry(useGameStore.getState().inventoryPanelLayout);
+    setUnsavedGeometry(false);
+  }, []);
+
+  const handleSaveGeometry = useCallback(() => {
+    if (!unsavedGeometry || !panelGeometry) return;
+    setInventoryPanelLayout(panelGeometry);
+    // Persist through the existing global-config write path (saveGame).
+    useGameStore.getState().saveGame();
+    setUnsavedGeometry(false);
+  }, [unsavedGeometry, panelGeometry, setInventoryPanelLayout]);
+
+  const handleCloseWithConfirm = useCallback(() => {
+    if (unsavedGeometry) {
+      setShowDiscardConfirm(true);
+      return;
+    }
+    handleClose();
+  }, [unsavedGeometry, handleClose]);
+
+  const handleResizeStart = useCallback(
+    (edge: 'right' | 'bottom') => (e: React.PointerEvent) => {
+      e.preventDefault();
+      e.stopPropagation();
+      const el = panelRef.current;
+      if (!el) return;
+      const rect = el.getBoundingClientRect();
+      const saved = useGameStore.getState().inventoryPanelLayout;
+      resizeState.current = {
+        edge,
+        pointerId: e.pointerId,
+        el: e.currentTarget as Element,
+        startX: e.clientX,
+        startY: e.clientY,
+        startW: rect.width,
+        startH: rect.height,
+        x: saved ? saved.x : rect.left,
+        y: saved ? saved.y : rect.top,
+      };
+      try { (e.currentTarget as Element).setPointerCapture(e.pointerId); } catch { /* unsupported */ }
+    },
+    []
+  );
+
+  const handleResizeMove = useCallback(
+    (e: React.PointerEvent) => {
+      const rs = resizeState.current;
+      if (!rs) return;
+      const vw = typeof window !== 'undefined' ? window.innerWidth : 0;
+      const vh = typeof window !== 'undefined' ? window.innerHeight : 0;
+      const maxW = Math.max(PANEL_MIN_W, vw - PANEL_GUTTER);
+      const maxH = Math.max(PANEL_MIN_H, vh - PANEL_GUTTER);
+      const w = rs.edge === 'right'
+        ? rs.startW + (e.clientX - rs.startX)
+        : rs.startW;
+      const h = rs.edge === 'bottom'
+        ? rs.startH + (e.clientY - rs.startY)
+        : rs.startH;
+      setPanelGeometry({
+        x: rs.x,
+        y: rs.y,
+        w: Math.max(PANEL_MIN_W, Math.min(maxW, w)),
+        h: Math.max(PANEL_MIN_H, Math.min(maxH, h)),
+      });
+      if (!unsavedGeometry) setUnsavedGeometry(true);
+    },
+    [unsavedGeometry]
+  );
+
+  const handleResizeEnd = useCallback(() => {
+    const rs = resizeState.current;
+    if (rs) {
+      try { rs.el.releasePointerCapture(rs.pointerId); } catch { /* already released */ }
+      resizeState.current = null;
+    }
+  }, []);
+
   const sortLabel = SORT_MODES.find((s) => s.key === sortMode)?.label ?? 'Rarity';
 
   if (!open && !mounted) return null;
@@ -518,16 +636,78 @@ export default function InventoryModal() {
       }}
     >
       <div
-        className={`bg-gray-900 border border-gray-700 rounded-xl w-[50vw] h-[70vh] shadow-2xl overflow-hidden transition-all duration-200 flex flex-col ${
+        ref={panelRef}
+        className={`bg-gray-900 border border-gray-700 rounded-xl shadow-2xl overflow-hidden transition-[opacity,scale] duration-200 flex flex-col ${
           closing ? 'scale-95 opacity-0' : 'scale-100 opacity-100'
         }`}
+        style={
+          panelGeometry
+            ? {
+                position: 'absolute',
+                left: panelGeometry.x,
+                top: panelGeometry.y,
+                width: panelGeometry.w,
+                height: panelGeometry.h,
+                transform: 'none',
+              }
+            : {
+                position: 'absolute',
+                width: '50vw',
+                height: '70vh',
+                left: '50%',
+                top: '50%',
+                transform: 'translate(-50%, -50%)',
+              }
+        }
       >
-        {/* Header */}
-        <div className="p-3 sm:p-4 border-b border-gray-800 flex justify-between items-center bg-gray-950 shrink-0">
-          <h2 className="text-lg sm:text-xl font-bold text-white tracking-wider">INVENTORY</h2>
+        {/* M2 #1 C1 — resize edges: right (ew) and bottom (ns). No corner. */}
+        <div
+          onPointerDown={handleResizeStart('right')}
+          onPointerMove={handleResizeMove}
+          onPointerUp={handleResizeEnd}
+          onPointerCancel={handleResizeEnd}
+          className="absolute right-0 top-0 bottom-0 w-1.5 cursor-ew-resize z-30 touch-none"
+          title="Drag to resize"
+        />
+        <div
+          onPointerDown={handleResizeStart('bottom')}
+          onPointerMove={handleResizeMove}
+          onPointerUp={handleResizeEnd}
+          onPointerCancel={handleResizeEnd}
+          className="absolute left-0 right-0 bottom-0 h-1.5 cursor-ns-resize z-30 touch-none"
+          title="Drag to resize"
+        />
+
+        {/* Top bar: Revert (left) | Save (center, green) | gold + X (right) */}
+        <div className="p-3 sm:p-4 border-b border-gray-800 flex items-center justify-between bg-gray-950 shrink-0">
+          <div className="flex items-center">
+            <button
+              type="button"
+              onClick={handleRevertGeometry}
+              title="Revert panel size to the last saved value"
+              className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-bold text-gray-300 bg-gray-800 border border-gray-700 hover:bg-gray-700 transition-colors"
+            >
+              <RotateCcw size={14} />
+              <span className="hidden sm:inline">Revert</span>
+            </button>
+          </div>
+          <div className="flex items-center">
+            <button
+              type="button"
+              onClick={handleSaveGeometry}
+              disabled={!unsavedGeometry}
+              title={unsavedGeometry ? 'Save panel size' : 'No unsaved panel size changes'}
+              className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-bold text-white transition-colors ${
+                unsavedGeometry ? 'bg-green-600 hover:bg-green-700' : 'bg-green-600 opacity-50 cursor-not-allowed'
+              }`}
+            >
+              <Save size={14} />
+              <span className="hidden sm:inline">Save</span>
+            </button>
+          </div>
           <div className="flex items-center gap-3">
             <span className="text-xs sm:text-sm text-amber-400 font-bold">{player.gold} Gold</span>
-            <button onClick={handleClose} className="text-gray-400 hover:text-white transition-colors">
+            <button onClick={handleCloseWithConfirm} className="text-gray-400 hover:text-white transition-colors">
               <X size={24} />
             </button>
           </div>
@@ -1003,6 +1183,40 @@ export default function InventoryModal() {
                 </>
               );
             })()}
+          </div>
+        </div>
+      )}
+
+      {/* M2 #1 C1 — discard-unsaved-formatting confirmation (inline pattern,
+          mirrors MainMenu's delete dialog). */}
+      {showDiscardConfirm && (
+        <div
+          className="absolute inset-0 z-[60] flex items-center justify-center bg-black/70 p-4"
+          onPointerDown={(e) => {
+            if (e.target === e.currentTarget) setShowDiscardConfirm(false);
+          }}
+        >
+          <div className="bg-gray-900 border border-gray-700 rounded-xl p-6 max-w-sm w-full shadow-2xl">
+            <h3 className="text-lg font-bold text-white mb-2">Discard unsaved changes?</h3>
+            <p className="text-sm text-gray-400 mb-6">Panel size changes have not been saved.</p>
+            <div className="flex gap-3">
+              <button
+                onClick={() => {
+                  setUnsavedGeometry(false);
+                  setShowDiscardConfirm(false);
+                  handleClose();
+                }}
+                className="flex-1 bg-red-600 hover:bg-red-700 text-white font-bold py-2 px-4 rounded-lg transition-colors"
+              >
+                Discard
+              </button>
+              <button
+                onClick={() => setShowDiscardConfirm(false)}
+                className="flex-1 bg-gray-800 hover:bg-gray-700 text-gray-300 font-bold py-2 px-4 border border-gray-700 rounded-lg transition-colors"
+              >
+                Cancel
+              </button>
+            </div>
           </div>
         </div>
       )}
