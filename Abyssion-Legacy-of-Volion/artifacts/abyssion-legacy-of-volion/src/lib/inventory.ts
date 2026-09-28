@@ -10,7 +10,7 @@ export interface InventoryState {
   categories: Record<ItemType, InventorySlot[]>;
 }
 
-export type SortMode = 'name' | 'rarity' | 'type';
+export type SortMode = 'name' | 'name-desc' | 'rarity' | 'price' | 'type';
 export type CategoryKey = ItemType;
 
 const ALL_CATEGORIES: ItemType[] = ['weapon', 'consumable', 'material', 'equipment', 'key'];
@@ -21,6 +21,15 @@ const RARITY_ORDER: Record<ItemRarity, number> = {
   rare: 2,
   uncommon: 3,
   common: 4,
+};
+
+// M2 #2 C9 — category order for the 'type' sort mode.
+const TYPE_ORDER: Record<ItemType, number> = {
+  weapon: 0,
+  equipment: 1,
+  consumable: 2,
+  material: 3,
+  key: 4,
 };
 
 export function createInventory(): InventoryState {
@@ -258,11 +267,22 @@ export function sortCategory(inv: InventoryState, cat: ItemType, mode: SortMode)
     const defA = getItem(a.itemId);
     const defB = getItem(b.itemId);
     if (!defA || !defB) return 0;
+    // M2 #2 C9 — identical items are equal; every other pair is ordered by mode.
+    if (defA.id === defB.id) return 0;
 
     if (mode === 'name') return defA.name.localeCompare(defB.name);
+    if (mode === 'name-desc') return defB.name.localeCompare(defA.name);
     if (mode === 'rarity') {
       const r = RARITY_ORDER[defA.rarity] - RARITY_ORDER[defB.rarity];
       return r !== 0 ? r : defA.name.localeCompare(defB.name);
+    }
+    if (mode === 'price') {
+      const p = defA.value - defB.value;
+      return p !== 0 ? p : defA.name.localeCompare(defB.name);
+    }
+    if (mode === 'type') {
+      const t = TYPE_ORDER[defA.type] - TYPE_ORDER[defB.type];
+      return t !== 0 ? t : defA.name.localeCompare(defB.name);
     }
     return 0;
   });
@@ -304,10 +324,21 @@ export function getCategoryDisplaySlots(
 
   if (sort && results.length > 1) {
     results.sort((a, b) => {
+      // M2 #2 C9 — identical items are equal; every other pair is ordered by mode.
+      if (a.def.id === b.def.id) return 0;
       if (sort === 'name') return a.def.name.localeCompare(b.def.name);
+      if (sort === 'name-desc') return b.def.name.localeCompare(a.def.name);
       if (sort === 'rarity') {
         const r = RARITY_ORDER[a.def.rarity] - RARITY_ORDER[b.def.rarity];
         return r !== 0 ? r : a.def.name.localeCompare(b.def.name);
+      }
+      if (sort === 'price') {
+        const p = a.def.value - b.def.value;
+        return p !== 0 ? p : a.def.name.localeCompare(b.def.name);
+      }
+      if (sort === 'type') {
+        const t = TYPE_ORDER[a.def.type] - TYPE_ORDER[b.def.type];
+        return t !== 0 ? t : a.def.name.localeCompare(b.def.name);
       }
       return 0;
     });

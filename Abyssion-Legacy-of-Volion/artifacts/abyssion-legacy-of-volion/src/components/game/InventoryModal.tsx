@@ -13,6 +13,8 @@ import {
   InventorySlot,
   SortMode,
   CATEGORY_META,
+  removeItem,
+  mergeStack,
 } from '@/lib/inventory';
 import { X, Search, ChevronDown, ArrowUpDown, Package, RotateCcw, Save } from 'lucide-react';
 import { Canvas } from '@react-three/fiber';
@@ -56,7 +58,10 @@ function inFightingBranch(itemId: string, branch: FightingBranch | null): boolea
 
 const SORT_MODES: { key: SortMode; label: string }[] = [
   { key: 'rarity', label: 'Rarity' },
-  { key: 'name', label: 'Name' },
+  { key: 'name', label: 'Name (A-Z)' },
+  { key: 'name-desc', label: 'Name (Z-A)' },
+  { key: 'price', label: 'Price (Low-High)' },
+  { key: 'type', label: 'Type' },
 ];
 
 const RARITY_GLOW: Record<string, string> = {
@@ -322,6 +327,13 @@ export default function InventoryModal() {
   const [panelGeometry, setPanelGeometry] = useState<InventoryPanelLayout | null>(null);
   const [unsavedGeometry, setUnsavedGeometry] = useState(false);
   const [showDiscardConfirm, setShowDiscardConfirm] = useState(false);
+  // M2 #2 C9 — right-click context menu and its discard-item confirmation.
+  const [contextMenu, setContextMenu] = useState<
+    { cat: ItemType; index: number; x: number; y: number } | null
+  >(null);
+  const [discardTarget, setDiscardTarget] = useState<
+    { cat: ItemType; index: number } | null
+  >(null);
 
   const longPressTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const longPressFired = useRef(false);
@@ -374,6 +386,10 @@ export default function InventoryModal() {
       setPanelGeometry(useGameStore.getState().inventoryPanelLayout);
       setUnsavedGeometry(false);
       setShowDiscardConfirm(false);
+    } else {
+      // M2 #2 C9 — transient menus must not survive a close.
+      setContextMenu(null);
+      setDiscardTarget(null);
     }
   }, [open]);
 
@@ -562,7 +578,13 @@ export default function InventoryModal() {
 
   const handleContextMenu = (e: React.MouseEvent, cat: ItemType, index: number) => {
     e.preventDefault();
-    openSplitDialog(cat, index);
+    e.stopPropagation();
+    setContextMenu({
+      cat,
+      index,
+      x: e.clientX,
+      y: e.clientY,
+    });
   };
 
   const toggleCollapse = (cat: string) => {
@@ -1198,6 +1220,146 @@ export default function InventoryModal() {
           </span>
         </div>
       </div>
+
+      {/* M2 #2 C9 — discard-item confirmation (mirrors the panel-format dialog). */}
+      {discardTarget && (
+        <div
+          className="absolute inset-0 z-[60] flex items-center justify-center bg-black/70 p-4"
+          onPointerDown={(e) => {
+            if (e.target === e.currentTarget) setDiscardTarget(null);
+          }}
+        >
+          <div className="bg-gray-900 border border-gray-700 rounded-xl p-6 max-w-sm w-full shadow-2xl">
+            <h3 className="text-lg font-bold text-white mb-2">Discard item?</h3>
+            <p className="text-sm text-gray-400 mb-6">This permanently removes the item from your inventory.</p>
+            <div className="flex gap-3">
+              <button
+                onClick={() => {
+                  const slot = player.inventory.categories[discardTarget.cat]?.[discardTarget.index];
+                  if (slot) {
+                    const result = removeItem(player.inventory, slot.itemId, slot.count);
+                    setInventory(result.inv);
+                  }
+                  setDiscardTarget(null);
+                }}
+                className="flex-1 bg-red-600 hover:bg-red-700 text-white font-bold py-2 px-4 rounded-lg transition-colors"
+              >
+                Discard
+              </button>
+              <button
+                onClick={() => setDiscardTarget(null)}
+                className="flex-1 bg-gray-800 hover:bg-gray-700 text-gray-300 font-bold py-2 px-4 border border-gray-700 rounded-lg transition-colors"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* M2 #2 C9 — right-click context menu. Rendered inside the modal root,
+          above the panel; dismissed by its own full-screen backdrop, by
+          Escape while focused, or by any menu action. No window listener. */}
+      {contextMenu && ((cm) => {
+        const slot = player.inventory.categories[cm.cat]?.[cm.index];
+        const def = slot ? getItem(slot.itemId) : undefined;
+        if (!slot || !def) return null;
+        // Combine is offered only when exactly one OTHER slot holds the same item.
+        const others = (player.inventory.categories[cm.cat] ?? [])
+          .map((s, i) => ({ s, i }))
+          .filter(({ s, i }) => i !== cm.index && s.itemId === def.id);
+        const combineIndex = others.length === 1 ? (others[0]?.i ?? -1) : -1;
+        const vw = typeof window !== 'undefined' ? window.innerWidth : 9999;
+        const vh = typeof window !== 'undefined' ? window.innerHeight : 9999;
+        const left = Math.min(cm.x, vw - 200);
+        const top = Math.min(cm.y, vh - 260);
+        const itemClass =
+          'w-full text-left px-3 py-1.5 text-sm text-gray-200 hover:bg-gray-700 transition-colors';
+        return (
+          <>
+            <div className="fixed inset-0 z-[70]" onPointerDown={() => setContextMenu(null)} />
+            <div
+              role="menu"
+              tabIndex={-1}
+              autoFocus
+              onKeyDown={(e) => {
+                if (e.key === 'Escape') setContextMenu(null);
+              }}
+              className="fixed z-[71] w-[180px] bg-gray-900 border border-gray-700 rounded-lg shadow-2xl py-1 focus:outline-none"
+              style={{ left, top }}
+            >
+              {def.type === 'consumable' && (
+                <button
+                  type="button"
+                  className={itemClass}
+                  onClick={() => {
+                    useConsumableItem(def.name);
+                    setContextMenu(null);
+                  }}
+                >
+                  Use
+                </button>
+              )}
+              {(def.type === 'weapon' || Boolean(def.metadata?.armour)) && (
+                <button
+                  type="button"
+                  className={itemClass}
+                  onClick={() => {
+                    equipWeapon(def.id);
+                    setContextMenu(null);
+                  }}
+                >
+                  Equip
+                </button>
+              )}
+              {def.maxStack > 1 && slot.count > 1 && (
+                <button
+                  type="button"
+                  className={itemClass}
+                  onClick={() => {
+                    openSplitDialog(cm.cat, cm.index);
+                    setContextMenu(null);
+                  }}
+                >
+                  Split
+                </button>
+              )}
+              {def.maxStack > 1 && combineIndex >= 0 && (
+                <button
+                  type="button"
+                  className={itemClass}
+                  onClick={() => {
+                    setInventory(mergeStack(player.inventory, cm.cat, cm.index, combineIndex));
+                    setContextMenu(null);
+                  }}
+                >
+                  Combine
+                </button>
+              )}
+              <button
+                type="button"
+                className={itemClass}
+                onClick={() => {
+                  setTooltip({ def, x: cm.x, y: cm.y });
+                  setContextMenu(null);
+                }}
+              >
+                Inspect
+              </button>
+              <button
+                type="button"
+                className={itemClass}
+                onClick={() => {
+                  setDiscardTarget({ cat: cm.cat, index: cm.index });
+                  setContextMenu(null);
+                }}
+              >
+                Discard
+              </button>
+            </div>
+          </>
+        );
+      })(contextMenu)}
 
       {/* Tooltip */}
       {tooltip && (
