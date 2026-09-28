@@ -330,7 +330,7 @@ export default function InventoryModal() {
   // M2 #1 C1 — single mutable ref for the in-flight resize drag: no per-move
   // allocation, and the listeners live on the captured edge element only.
   const resizeState = useRef<{
-    edge: 'right' | 'bottom';
+    edge: 'top' | 'right' | 'bottom' | 'left';
     pointerId: number;
     el: Element;
     startX: number;
@@ -341,6 +341,16 @@ export default function InventoryModal() {
     y: number;
   } | null>(null);
   const panelRef = useRef<HTMLDivElement | null>(null);
+  // M2 #2 C7 — in-flight panel MOVE (top-bar drag). Mirrors resizeState:
+  // one mutable ref, no per-move allocation.
+  const moveState = useRef<{
+    pointerId: number;
+    el: Element;
+    startClientX: number;
+    startClientY: number;
+    startPanelX: number;
+    startPanelY: number;
+  } | null>(null);
   const setInventoryPanelLayout = useGameStore((s) => s.setInventoryPanelLayout);
 
   const open = ui.showInventory;
@@ -381,6 +391,12 @@ export default function InventoryModal() {
       try { rs.el.releasePointerCapture(rs.pointerId); } catch { /* already released */ }
       resizeState.current = null;
     }
+    // M2 #2 C7 — same for an in-flight panel move.
+    const ms = moveState.current;
+    if (ms) {
+      try { ms.el.releasePointerCapture(ms.pointerId); } catch { /* already released */ }
+      moveState.current = null;
+    }
   }, []);
 
   const handleClose = useCallback(() => {
@@ -394,6 +410,17 @@ export default function InventoryModal() {
       setPanelGeometry(null);
       setUnsavedGeometry(false);
       setShowDiscardConfirm(false);
+      // M2 #2 C7 — drop any in-flight resize / move capture on close.
+      const rs = resizeState.current;
+      if (rs) {
+        try { rs.el.releasePointerCapture(rs.pointerId); } catch { /* already released */ }
+        resizeState.current = null;
+      }
+      const ms = moveState.current;
+      if (ms) {
+        try { ms.el.releasePointerCapture(ms.pointerId); } catch { /* already released */ }
+        moveState.current = null;
+      }
     }, 200);
   }, [setShowInventory]);
 
@@ -565,27 +592,32 @@ export default function InventoryModal() {
   }, [unsavedGeometry, handleClose]);
 
   const handleResizeStart = useCallback(
-    (edge: 'right' | 'bottom') => (e: React.PointerEvent) => {
+    (edge: 'top' | 'right' | 'bottom' | 'left') => (e: React.PointerEvent) => {
       e.preventDefault();
       e.stopPropagation();
       const el = panelRef.current;
       if (!el) return;
       const rect = el.getBoundingClientRect();
-      const saved = useGameStore.getState().inventoryPanelLayout;
+      // M2 #2 C7 (R4) — seed the panel's x/y/w/h from the live rect whenever the
+      // in-memory geometry is absent (centred default), so the first resize on a
+      // centred panel behaves like any subsequent one; otherwise use the stored
+      // geometry unchanged. startX/startY stay the POINTER's down coordinates —
+      // R3's dx/dy and the left/top formulas are defined in terms of them.
+      const seed = panelGeometry;
       resizeState.current = {
         edge,
         pointerId: e.pointerId,
         el: e.currentTarget as Element,
         startX: e.clientX,
         startY: e.clientY,
-        startW: rect.width,
-        startH: rect.height,
-        x: saved ? saved.x : rect.left,
-        y: saved ? saved.y : rect.top,
+        startW: seed ? seed.w : rect.width,
+        startH: seed ? seed.h : rect.height,
+        x: seed ? seed.x : rect.left,
+        y: seed ? seed.y : rect.top,
       };
       try { (e.currentTarget as Element).setPointerCapture(e.pointerId); } catch { /* unsupported */ }
     },
-    []
+    [panelGeometry]
   );
 
   const handleResizeMove = useCallback(
@@ -594,20 +626,32 @@ export default function InventoryModal() {
       if (!rs) return;
       const vw = typeof window !== 'undefined' ? window.innerWidth : 0;
       const vh = typeof window !== 'undefined' ? window.innerHeight : 0;
-      const maxW = Math.max(PANEL_MIN_W, vw - PANEL_GUTTER);
-      const maxH = Math.max(PANEL_MIN_H, vh - PANEL_GUTTER);
-      const w = rs.edge === 'right'
-        ? rs.startW + (e.clientX - rs.startX)
-        : rs.startW;
-      const h = rs.edge === 'bottom'
-        ? rs.startH + (e.clientY - rs.startY)
-        : rs.startH;
-      setPanelGeometry({
-        x: rs.x,
-        y: rs.y,
-        w: Math.max(PANEL_MIN_W, Math.min(maxW, w)),
-        h: Math.max(PANEL_MIN_H, Math.min(maxH, h)),
-      });
+      const dx = e.clientX - rs.startX;
+      const dy = e.clientY - rs.startY;
+      let x = rs.x;
+      let y = rs.y;
+      let w = rs.startW;
+      let h = rs.startH;
+
+      // M2 #2 C7 (R3) — per-edge geometry. right/bottom move the free edge;
+      // left/top pin the opposite edge and recompute the origin from it.
+      if (rs.edge === 'right') {
+        const maxW = Math.max(PANEL_MIN_W, vw - rs.x - PANEL_GUTTER);
+        w = Math.max(PANEL_MIN_W, Math.min(rs.startW + dx, maxW));
+      } else if (rs.edge === 'bottom') {
+        const maxH = Math.max(PANEL_MIN_H, vh - rs.y - PANEL_GUTTER);
+        h = Math.max(PANEL_MIN_H, Math.min(rs.startH + dy, maxH));
+      } else if (rs.edge === 'left') {
+        const maxW = Math.max(PANEL_MIN_W, rs.startX + rs.startW - PANEL_GUTTER);
+        w = Math.max(PANEL_MIN_W, Math.min(rs.startW - dx, maxW));
+        x = rs.startX + rs.startW - w;
+      } else {
+        const maxH = Math.max(PANEL_MIN_H, rs.startY + rs.startH - PANEL_GUTTER);
+        h = Math.max(PANEL_MIN_H, Math.min(rs.startH - dy, maxH));
+        y = rs.startY + rs.startH - h;
+      }
+
+      setPanelGeometry({ x, y, w, h });
       if (!unsavedGeometry) setUnsavedGeometry(true);
     },
     [unsavedGeometry]
@@ -618,6 +662,58 @@ export default function InventoryModal() {
     if (rs) {
       try { rs.el.releasePointerCapture(rs.pointerId); } catch { /* already released */ }
       resizeState.current = null;
+    }
+  }, []);
+
+  // ── M2 #2 C7 — panel MOVE by dragging the top bar ─────────────────────
+  const handleMoveStart = useCallback((e: React.PointerEvent) => {
+    // Never start a move from an interactive control living in the top bar.
+    const target = e.target as Element | null;
+    if (target && target.closest('button, input, select, textarea, [role="button"]')) return;
+    // Primary button / touch / pen only.
+    if (e.button !== 0) return;
+    e.preventDefault();
+    e.stopPropagation();
+    const el = panelRef.current;
+    if (!el) return;
+    const rect = el.getBoundingClientRect();
+    moveState.current = {
+      pointerId: e.pointerId,
+      el: e.currentTarget as Element,
+      startClientX: e.clientX,
+      startClientY: e.clientY,
+      startPanelX: rect.left,
+      startPanelY: rect.top,
+    };
+    // Geometry is deferred to the first move — a plain click must not move it.
+    try { (e.currentTarget as Element).setPointerCapture(e.pointerId); } catch { /* unsupported */ }
+  }, []);
+
+  const handleMoveMove = useCallback((e: React.PointerEvent) => {
+    const ms = moveState.current;
+    if (!ms) return;
+    const el = panelRef.current;
+    if (!el) return;
+    const vw = typeof window !== 'undefined' ? window.innerWidth : 0;
+    const vh = typeof window !== 'undefined' ? window.innerHeight : 0;
+    const rect = el.getBoundingClientRect();
+    const w = panelGeometry ? panelGeometry.w : rect.width;
+    const h = panelGeometry ? panelGeometry.h : rect.height;
+    const dx = e.clientX - ms.startClientX;
+    const dy = e.clientY - ms.startClientY;
+    const maxX = Math.max(0, vw - w - PANEL_GUTTER);
+    const maxY = Math.max(0, vh - h - PANEL_GUTTER);
+    const newX = Math.max(0, Math.min(ms.startPanelX + dx, maxX));
+    const newY = Math.max(0, Math.min(ms.startPanelY + dy, maxY));
+    setPanelGeometry({ x: newX, y: newY, w, h });
+    if (!unsavedGeometry) setUnsavedGeometry(true);
+  }, [panelGeometry, unsavedGeometry]);
+
+  const handleMoveEnd = useCallback(() => {
+    const ms = moveState.current;
+    if (ms) {
+      try { ms.el.releasePointerCapture(ms.pointerId); } catch { /* already released */ }
+      moveState.current = null;
     }
   }, []);
 
@@ -657,7 +753,24 @@ export default function InventoryModal() {
               }
         }
       >
-        {/* M2 #1 C1 — resize edges: right (ew) and bottom (ns). No corner. */}
+        {/* M2 #1 C1 — resize edges: right (ew) and bottom (ns). No corner.
+            M2 #2 C7 — added the top (ns) and left (ew) edges. */}
+        <div
+          onPointerDown={handleResizeStart('top')}
+          onPointerMove={handleResizeMove}
+          onPointerUp={handleResizeEnd}
+          onPointerCancel={handleResizeEnd}
+          className="absolute left-0 right-0 top-0 h-1.5 cursor-ns-resize z-30 touch-none"
+          title="Drag to resize"
+        />
+        <div
+          onPointerDown={handleResizeStart('left')}
+          onPointerMove={handleResizeMove}
+          onPointerUp={handleResizeEnd}
+          onPointerCancel={handleResizeEnd}
+          className="absolute left-0 top-0 bottom-0 w-1.5 cursor-ew-resize z-30 touch-none"
+          title="Drag to resize"
+        />
         <div
           onPointerDown={handleResizeStart('right')}
           onPointerMove={handleResizeMove}
@@ -676,7 +789,13 @@ export default function InventoryModal() {
         />
 
         {/* Top bar: Revert (left) | Save (center, green) | gold + X (right) */}
-        <div className="p-3 sm:p-4 border-b border-gray-800 flex items-center justify-between bg-gray-950 shrink-0">
+        <div
+          className="p-3 sm:p-4 border-b border-gray-800 flex items-center justify-between bg-gray-950 shrink-0"
+          onPointerDown={handleMoveStart}
+          onPointerMove={handleMoveMove}
+          onPointerUp={handleMoveEnd}
+          onPointerCancel={handleMoveEnd}
+        >
           <div className="flex items-center">
             <button
               type="button"
@@ -823,12 +942,14 @@ export default function InventoryModal() {
           {/* ── Upper equipment region (M1W2D6 #5) ──────────────────────
               Left: SMALL player preview + the four armour slots beneath it.
               Right of the preview: intentionally EMPTY reserved area. */}
-          <div className="shrink-0 border-b border-gray-800 bg-gray-950/60 flex items-start gap-3 p-2">
-          <div className="flex flex-col items-center gap-2 shrink-0">
-            <CharacterPreview />
+          <div className="shrink-0 border-b border-gray-800 bg-gray-950/60 flex items-center gap-3 px-2 py-1 h-[92px] overflow-hidden">
+          <div className="flex flex-row items-center gap-2 shrink-0">
+            <div className="shrink-0 h-[72px] w-[72px] overflow-hidden flex items-center justify-center">
+              <CharacterPreview />
+            </div>
             {/* Four independent armour slots — each bound to its own
                 authoritative equippedArmourSlots entry via equipWeapon. */}
-            <div className="grid grid-cols-2 gap-1.5">
+            <div className="grid grid-cols-4 gap-1.5">
               {(['helmet', 'chest', 'leggings', 'boots'] as ArmourSlot[]).map((slotKey) => {
                 const slotId = player.equippedArmourSlots?.[slotKey] ?? null;
                 const slotDef = slotId ? getItem(slotId) : null;
@@ -871,7 +992,7 @@ export default function InventoryModal() {
           </div>
           {/* Reserved empty area to the right of the preview — deliberately
               unused in this session. */}
-          <div className="flex-1 min-h-[9rem]" aria-hidden />
+          <div className="flex-1 min-h-0" aria-hidden />
           </div>
 
           <div className="flex flex-col flex-1 min-h-0 min-w-0">
