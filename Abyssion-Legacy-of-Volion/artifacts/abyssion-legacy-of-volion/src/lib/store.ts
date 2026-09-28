@@ -1782,7 +1782,15 @@ export const useGameStore = create<GameState>((set, get) => ({
       pages = [...localize('greeting'), ...localize('randomPool')];
     }
 
-    const effectiveChoices = !questToOffer && !questToTurnIn && npc.dialogue.choices
+    // M2 #1 C1 — an NPC's optional choices (shop / archetype) are no longer
+    // gated on quest state. Gating them behind `!questToOffer &&
+    // !questToTurnIn` dropped EVERY choice while that NPC's quest was
+    // unaccepted or ready to turn in — which is exactly the state a player is
+    // in when they try the shop / role options, so Marcus's shop and
+    // Lysander's role change were unreachable. The quest offer / turn-in card
+    // and its accept / claim buttons still render on the last page, alongside
+    // the choices.
+    const effectiveChoices = npc.dialogue.choices
       ? ((loc as any)?.choices ?? npc.dialogue.choices)
       : undefined;
 

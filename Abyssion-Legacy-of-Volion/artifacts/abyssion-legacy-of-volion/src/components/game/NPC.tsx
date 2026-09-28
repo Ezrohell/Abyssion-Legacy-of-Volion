@@ -577,6 +577,21 @@ export default function NPC({ data }: NPCProps) {
     }
   };
 
+  // M2 #1 C1 — merchants keep a direct shop path (operator's "A & B"): the
+  // badge under their name is their own interaction prompt, so it opens the
+  // shop panel through the single existing openShop action. Talking (E key,
+  // body tap) still opens the dialogue, which offers the shop choice and the
+  // quest flow, so neither route replaces the other.
+  const handlePromptInteract = () => {
+    const s = useGameStore.getState();
+    if (s.activeDialogue) return;
+    if (data.type === 'merchant') {
+      s.openShop(data.id);
+      return;
+    }
+    s.openDialogueForNpc(data.id);
+  };
+
   const getStyleColors = () => {
     switch (data.type) {
       case 'villager':
@@ -736,7 +751,7 @@ export default function NPC({ data }: NPCProps) {
       {/* Name and Interaction Badge */}
       <Html position={[0, 2.2, 0]} center distanceFactor={12}>
         <div
-          onClick={handleInteract}
+          onClick={handlePromptInteract}
           className="bg-slate-900/85 text-slate-100 backdrop-blur-md px-2.5 py-1 rounded-lg border border-slate-700/80 shadow-md text-center pointer-events-auto cursor-pointer select-none hover:border-amber-400 transition-colors"
         >
           <div className="text-[11px] font-bold whitespace-nowrap text-amber-300 flex items-center justify-center gap-1">

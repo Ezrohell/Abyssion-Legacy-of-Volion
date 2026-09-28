@@ -83,7 +83,11 @@ export default function DialogueModal() {
   const questToOffer = activeDialogue.questToOffer;
   const questToTurnIn = activeDialogue.questToTurnIn;
   const choices = activeDialogue.choices;
-  const showChoices = isLastPage && choices && choices.length > 0 && !questToOffer && !questToTurnIn;
+  // M2 #1 C1 — the choices are no longer suppressed while a quest is to offer
+  // or to turn in: that gate is what hid Marcus's shop option and Lysander's
+  // role option in exactly the states players test them. The quest card and
+  // its accept / claim buttons render alongside the choices instead.
+  const showChoices = isLastPage && !!choices && choices.length > 0;
 
   const handleCardClick = () => {
     if (isTyping) {
@@ -252,7 +256,7 @@ export default function DialogueModal() {
           </div>
 
           <div className="flex items-center gap-2">
-            {!showChoices && isLastPage && questToOffer && (
+            {isLastPage && questToOffer && (
               <button
                 onClick={(e) => {
                   e.stopPropagation();
@@ -264,7 +268,7 @@ export default function DialogueModal() {
               </button>
             )}
 
-            {!showChoices && isLastPage && questToTurnIn && (
+            {isLastPage && questToTurnIn && (
               <button
                 onClick={(e) => {
                   e.stopPropagation();
@@ -276,7 +280,7 @@ export default function DialogueModal() {
               </button>
             )}
 
-            {!showChoices && !isLastPage ? (
+            {!isLastPage ? (
               <button
                 onClick={(e) => {
                   e.stopPropagation();
@@ -285,16 +289,6 @@ export default function DialogueModal() {
                 className="px-4 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 font-bold rounded-xl text-xs sm:text-sm border border-slate-700 active:scale-95 transition-all"
               >
                 {isTyping ? tl('dialogue.skip') : tl('dialogue.next')}
-              </button>
-            ) : !showChoices ? (
-              <button
-                onClick={(e) => {
-                  e.stopPropagation();
-                  closeDialogue();
-                }}
-                className="px-3.5 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 font-bold rounded-xl text-xs sm:text-sm border border-slate-700 active:scale-95 transition-all"
-              >
-                {tl('dialogue.close')}
               </button>
             ) : (
               <button
