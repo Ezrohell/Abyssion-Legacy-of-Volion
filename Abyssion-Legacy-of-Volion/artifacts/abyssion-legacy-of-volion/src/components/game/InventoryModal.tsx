@@ -631,9 +631,6 @@ export default function InventoryModal() {
       className={`absolute inset-0 z-40 flex items-center justify-center bg-black/60 backdrop-blur-md p-2 sm:p-4 transition-opacity duration-200 ${
         closing ? 'opacity-0' : 'opacity-100'
       }`}
-      onPointerDown={(e) => {
-        if (e.target === e.currentTarget) handleClose();
-      }}
     >
       <div
         ref={panelRef}
@@ -755,69 +752,15 @@ export default function InventoryModal() {
           </div>
         </div>
 
-        {/* ── Upper equipment region (M1W2D6 #5) ──────────────────────
-            Left: SMALL player preview + the four armour slots beneath it.
-            Right of the preview: intentionally EMPTY reserved area. */}
-        <div className="shrink-0 border-b border-gray-800 bg-gray-950/60 flex items-start gap-3 p-2">
-          <div className="flex flex-col items-center gap-2 shrink-0">
-            <CharacterPreview />
-            {/* Four independent armour slots — each bound to its own
-                authoritative equippedArmourSlots entry via equipWeapon. */}
-            <div className="grid grid-cols-2 gap-1.5">
-              {(['helmet', 'chest', 'leggings', 'boots'] as ArmourSlot[]).map((slotKey) => {
-                const slotId = player.equippedArmourSlots?.[slotKey] ?? null;
-                const slotDef = slotId ? getItem(slotId) : null;
-                const slotIcon = slotDef ? getIconComponent(slotDef.icon) : null;
-                const slotLabel = slotKey === 'helmet' ? 'Helmet' : slotKey === 'chest'
-                  ? 'Chestplate' : slotKey === 'leggings' ? 'Leggings' : 'Boots';
-                return (
-                  <div
-                    key={slotKey}
-                    title={slotDef ? `${slotLabel}: ${slotDef.name}` : `Empty ${slotLabel} slot`}
-                    onClick={() => { if (slotDef) equipWeapon(slotId as string); }}
-                    className={`relative w-14 h-14 rounded border-2 flex flex-col items-center justify-center cursor-pointer ${
-                      slotDef ? 'border-amber-600/70 bg-amber-900/20' : 'border-gray-700 bg-black/40 border-dashed'
-                    }`}
-                  >
-                    {slotIcon ? (() => { const SlotIcon = slotIcon; return <SlotIcon size={20} className="text-amber-300" />; })() : (
-                      <span className="text-[8px] uppercase tracking-wide text-gray-600 text-center leading-tight px-0.5">
-                        {slotLabel}
-                      </span>
-                    )}
-                    {slotDef && (
-                      <span className="text-[7px] text-gray-400 uppercase truncate w-full text-center px-0.5">
-                        {slotLabel}
-                      </span>
-                    )}
-                    {slotDef && (
-                      <button
-                        type="button"
-                        onClick={(e) => { e.stopPropagation(); unequipSlot(slotKey); }}
-                        title={`Unequip ${slotLabel}`}
-                        className="absolute -top-1.5 -right-1.5 w-4 h-4 flex items-center justify-center rounded-full bg-gray-900 border border-gray-600 text-gray-300 text-[10px] leading-none hover:text-red-400 hover:border-red-500"
-                      >
-                        ×
-                      </button>
-                    )}
-                  </div>
-                );
-              })}
-            </div>
-          </div>
-          {/* Reserved empty area to the right of the preview — deliberately
-              unused in this session. */}
-          <div className="flex-1 min-h-[9rem]" aria-hidden />
-        </div>
-
-        {/* Body: floating LEFT-side category navigation + independently
-            scrolling content column. The nav is absolutely positioned, so it
-            is not a flex child of the content row and item scrolling can never
-            move it. Tree: All | Fighting (Core/Melee/Ranged/Armour) | Item |
+        {/* Body row (M2 #2 C2): three columns — category nav (25%) |
+            equipment + inventory grid (50%) | description placeholder (25%).
+            The nav is now a real flex column, not an absolutely positioned
+            overlay. Tree: All | Fighting (Core/Melee/Ranged/Armour) | Item |
             Healing — no Food. */}
         <div className="relative flex flex-1 min-h-0">
-          {/* Floating category nav: anchored to the modal's left padding edge,
-              outside the item-grid scroll region, visible by default. */}
-          <nav className="absolute left-3 sm:left-4 top-2 bottom-2 z-20 w-24 sm:w-32 flex flex-col gap-1.5 p-2 overflow-y-auto rounded-lg border border-gray-800 bg-gray-950/95 shadow-xl">
+          {/* Col 1 (25%) — category navigation, visible by default. */}
+          <div className="flex flex-col basis-1/4 min-w-0">
+          <nav className="w-24 sm:w-32 flex flex-col gap-1.5 p-2 overflow-y-auto rounded-lg border border-gray-800 bg-gray-950/95 shadow-xl">
             {NAV_CATEGORIES.map(([key, label, iconName]) => {
               const IconComp = getIconComponent(iconName);
               return (
@@ -873,10 +816,68 @@ export default function InventoryModal() {
               );
             })}
           </nav>
-          <div className="flex flex-col flex-1 min-w-0 pl-[7.5rem] sm:pl-40">
+          </div>{/* end Col 1 */}
+
+          {/* Col 2 (50%) — equipment region above the inventory grid. */}
+          <div className="flex flex-col basis-1/2 min-w-0">
+          {/* ── Upper equipment region (M1W2D6 #5) ──────────────────────
+              Left: SMALL player preview + the four armour slots beneath it.
+              Right of the preview: intentionally EMPTY reserved area. */}
+          <div className="shrink-0 border-b border-gray-800 bg-gray-950/60 flex items-start gap-3 p-2">
+          <div className="flex flex-col items-center gap-2 shrink-0">
+            <CharacterPreview />
+            {/* Four independent armour slots — each bound to its own
+                authoritative equippedArmourSlots entry via equipWeapon. */}
+            <div className="grid grid-cols-2 gap-1.5">
+              {(['helmet', 'chest', 'leggings', 'boots'] as ArmourSlot[]).map((slotKey) => {
+                const slotId = player.equippedArmourSlots?.[slotKey] ?? null;
+                const slotDef = slotId ? getItem(slotId) : null;
+                const slotIcon = slotDef ? getIconComponent(slotDef.icon) : null;
+                const slotLabel = slotKey === 'helmet' ? 'Helmet' : slotKey === 'chest'
+                  ? 'Chestplate' : slotKey === 'leggings' ? 'Leggings' : 'Boots';
+                return (
+                  <div
+                    key={slotKey}
+                    title={slotDef ? `${slotLabel}: ${slotDef.name}` : `Empty ${slotLabel} slot`}
+                    onClick={() => { if (slotDef) equipWeapon(slotId as string); }}
+                    className={`relative w-14 h-14 rounded border-2 flex flex-col items-center justify-center cursor-pointer ${
+                      slotDef ? 'border-amber-600/70 bg-amber-900/20' : 'border-gray-700 bg-black/40 border-dashed'
+                    }`}
+                  >
+                    {slotIcon ? (() => { const SlotIcon = slotIcon; return <SlotIcon size={20} className="text-amber-300" />; })() : (
+                      <span className="text-[8px] uppercase tracking-wide text-gray-600 text-center leading-tight px-0.5">
+                        {slotLabel}
+                      </span>
+                    )}
+                    {slotDef && (
+                      <span className="text-[7px] text-gray-400 uppercase truncate w-full text-center px-0.5">
+                        {slotLabel}
+                      </span>
+                    )}
+                    {slotDef && (
+                      <button
+                        type="button"
+                        onClick={(e) => { e.stopPropagation(); unequipSlot(slotKey); }}
+                        title={`Unequip ${slotLabel}`}
+                        className="absolute -top-1.5 -right-1.5 w-4 h-4 flex items-center justify-center rounded-full bg-gray-900 border border-gray-600 text-gray-300 text-[10px] leading-none hover:text-red-400 hover:border-red-500"
+                      >
+                        ×
+                      </button>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+          {/* Reserved empty area to the right of the preview — deliberately
+              unused in this session. */}
+          <div className="flex-1 min-h-[9rem]" aria-hidden />
+          </div>
+
+          <div className="flex flex-col flex-1 min-h-0 min-w-0">
 
         {/* Category Sections */}
-        <div className="overflow-y-auto flex-1 min-h-[140px]">
+        <div className="overflow-y-auto flex-1 min-h-0">
           {activeCats.length === 0 ? (
             <div className="flex flex-col items-center justify-center h-full py-12 text-gray-500">
               <Package size={40} className="mb-2 opacity-40" />
@@ -1058,6 +1059,11 @@ export default function InventoryModal() {
           )}
         </div>
           </div>{/* end scrolling content column */}
+
+          </div>{/* end Col 2 */}
+
+          {/* Col 3 (25%) — reserved description panel (empty placeholder). */}
+          <div className="basis-1/4 min-w-0" aria-hidden />
 
         </div>{/* end body row */}
 

@@ -768,13 +768,8 @@ export default function UI() {
         return;
       }
 
-      // Escape/Tab/I close the inventory even while other input is blocked —
-      // otherwise a keyboard-only player can get stuck with the modal open.
-      if (s.ui.showInventory && (e.key === 'Escape' || e.key === 'Tab' || e.key === 'i' || e.key === 'I')) {
-        e.preventDefault();
-        setShowInventory(false);
-        return;
-      }
+      // M2 #2 C4 — the inventory closes only via its X button. The former
+      // Escape/Tab/I close path was removed; Tab/I still open it (below).
       // Expanded map owns keyboard input while open (ExpandedMap handles
       // Escape/M via its own capture listener and closes through setMapOpen).
       if (s.ui.mapOpen) return;
@@ -832,8 +827,9 @@ export default function UI() {
         s.useConsumableItem();
       }
 
-      // Inventory toggle
+      // Inventory toggle — open only (M2 #2 C4: closing is X-button-only).
       if (e.key === 'Tab' || e.key === 'i' || e.key === 'I') {
+        if (s.ui.showInventory) return;
         e.preventDefault();
         setShowInventory(!s.ui.showInventory);
       }
