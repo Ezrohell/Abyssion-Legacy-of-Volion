@@ -283,8 +283,23 @@ function InteractPromptContent({ preview = false }: { preview?: boolean } = {}) 
   const interactPrompt = preview ? 'Interact' : livePrompt;
   if (!interactPrompt) return null;
 
+  // M2 #1 — the prompt advertises "Press or Click [E]" but it had no handler at
+  // all and its wrapper dropped pointer events, so on any device without a
+  // physical keyboard (and for mouse-only players) the single interaction
+  // affordance in the game was decorative. Activating it replays the one E-key
+  // handler in UI.tsx (same npc/checkpoint pick, same blocked-state gate, same
+  // counters/diagnostic) instead of duplicating that logic here.
+  const pressInteract = () => {
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'e', code: 'KeyE', bubbles: true }));
+    window.dispatchEvent(new KeyboardEvent('keyup', { key: 'e', code: 'KeyE', bubbles: true }));
+  };
+
   return (
-    <div className="flex items-center gap-2 px-3 py-2 rounded-lg"
+    <button
+      type="button"
+      onClick={preview ? undefined : pressInteract}
+      title="Interact (E)"
+      className="flex items-center gap-2 px-3 py-2 rounded-lg"
       style={{
         background: H.colors.interactBg,
         border: `1px solid ${H.colors.interactBorder}`,
@@ -305,7 +320,7 @@ function InteractPromptContent({ preview = false }: { preview?: boolean } = {}) 
       <span className="text-xs font-semibold" style={{ color: H.colors.interactText }}>
         {interactPrompt}
       </span>
-    </div>
+    </button>
   );
 }
 
@@ -623,7 +638,7 @@ export default function GameHUD() {
       )}
 
       {hudLayout.interactPrompt.visible && (
-        <DraggableHudElement id="interactPrompt" config={hudLayout.interactPrompt}>
+        <DraggableHudElement id="interactPrompt" config={hudLayout.interactPrompt} interactive>
           <InteractPromptContent />
         </DraggableHudElement>
       )}
