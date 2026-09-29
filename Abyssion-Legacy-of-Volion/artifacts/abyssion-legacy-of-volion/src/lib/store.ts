@@ -815,6 +815,79 @@ const ENEMY_KILL_REWARDS: Record<string, { itemId: string; count: number }> = {
 };
 const rewardedEnemyDeaths = new Set<string>();
 
+// M2D1 #1c — per-enemy-type loot tables. Keys are the enemy-name strings that
+// actually reach onEnemyKilled at runtime, read off the mount sites: the story
+// world passes the five config defaults explicitly (GameScene.tsx) and the
+// arena passes the three ENCOUNTER_CONFIG overrides (EncounterArea.tsx), so
+// both spellings are listed. 'Training Dummy' is deliberately absent — the
+// training target must not drop loot. Each entry's chance is an independent
+// 0..1 roll; count is minCount + floor(rng() * (maxCount - minCount + 1)).
+const ENEMY_DROP_TABLES: Record<
+  string,
+  readonly {
+    itemId: string;
+    chance: number;
+    minCount: number;
+    maxCount: number;
+  }[]
+> = {
+  'Bouncy Slime': [
+    { itemId: 'small_potion', chance: 0.40, minCount: 1, maxCount: 1 },
+    { itemId: 'arcane_shard', chance: 0.15, minCount: 1, maxCount: 1 },
+  ],
+  'Arena Slime': [
+    { itemId: 'small_potion', chance: 0.40, minCount: 1, maxCount: 1 },
+    { itemId: 'arcane_shard', chance: 0.15, minCount: 1, maxCount: 1 },
+  ],
+  'Dire Wolf': [
+    { itemId: 'beef_steak', chance: 0.30, minCount: 1, maxCount: 1 },
+    { itemId: 'leather_armour', chance: 0.10, minCount: 1, maxCount: 1 },
+  ],
+  'Arena Wolf': [
+    { itemId: 'beef_steak', chance: 0.30, minCount: 1, maxCount: 1 },
+    { itemId: 'leather_armour', chance: 0.10, minCount: 1, maxCount: 1 },
+  ],
+  'Thornback': [
+    { itemId: 'thornback_spine', chance: 0.60, minCount: 1, maxCount: 1 },
+    { itemId: 'iron_ore', chance: 0.30, minCount: 1, maxCount: 1 },
+  ],
+  'Bandit Fighter': [
+    { itemId: 'arrow_bundle', chance: 0.35, minCount: 1, maxCount: 2 },
+    { itemId: 'iron_ore', chance: 0.25, minCount: 1, maxCount: 1 },
+    { itemId: 'bread', chance: 0.30, minCount: 1, maxCount: 1 },
+  ],
+  'Arena Bandit': [
+    { itemId: 'arrow_bundle', chance: 0.35, minCount: 1, maxCount: 2 },
+    { itemId: 'iron_ore', chance: 0.25, minCount: 1, maxCount: 1 },
+    { itemId: 'bread', chance: 0.30, minCount: 1, maxCount: 1 },
+  ],
+  'Arcane Mage': [
+    { itemId: 'arcane_shard', chance: 0.50, minCount: 1, maxCount: 2 },
+    { itemId: 'small_potion', chance: 0.35, minCount: 1, maxCount: 1 },
+  ],
+};
+
+/** M2D1 #1c — roll one enemy's loot table. Internal helper: every drop chance
+ *  is an independent roll, and count is an inclusive min..max span. The rng is
+ *  injected so the roll can be driven deterministically from a test; callers
+ *  pass Math.random. Returns [] for an enemy with no table. */
+function rollDrops(
+  enemyName: string,
+  rng: () => number
+): { itemId: string; count: number }[] {
+  const table = ENEMY_DROP_TABLES[enemyName];
+  if (!table) return [];
+  const out: { itemId: string; count: number }[] = [];
+  for (const entry of table) {
+    if (rng() < entry.chance) {
+      const span = entry.maxCount - entry.minCount + 1;
+      const count = entry.minCount + Math.floor(rng() * span);
+      out.push({ itemId: entry.itemId, count });
+    }
+  }
+  return out;
+}
+
 /** Clear the exactly-once reward guard (New Game / Load / menu boundaries). */
 export function clearRewardedEnemyDeaths(): void {
   rewardedEnemyDeaths.clear();
@@ -2035,6 +2108,21 @@ export const useGameStore = create<GameState>((set, get) => ({
           masteryPointsForEvent('kill', killSt.player.totalKills),
         );
       }
+    }
+
+    // M2D1 #1c — loot roll, after the mastery award. Each enemy type rolls its
+    // own table and the hits land straight in the inventory: no world pickup,
+    // no notification. Coin is untouched — the enemy components still drop it
+    // as world loot through their own addLootDrop path.
+    const drops = rollDrops(enemyName, Math.random);
+    if (drops.length > 0) {
+      set((state) => {
+        let inv = state.player.inventory;
+        for (const d of drops) {
+          inv = addItem(inv, d.itemId, d.count).inv;
+        }
+        return { player: { ...state.player, inventory: inv } };
+      });
     }
 
     // Arena progression: 3 actual kills -> exactly one +1 level. The
