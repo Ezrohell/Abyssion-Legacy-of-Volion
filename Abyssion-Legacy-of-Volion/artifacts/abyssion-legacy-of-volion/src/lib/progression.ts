@@ -152,12 +152,10 @@ export function masteryLevelFor(exp: number): number {
   return lo;
 }
 
-/** Kill-count mastery scaling: +1% per kill, capped at 1000 kills.
- *  NOTE the cap value is 11.0 at 1000 kills (1 + 1000 * 0.01), not 2.0 —
- *  the spec's formula and its "doubles at 1000 kills" prose disagree, and
- *  the formula is what ships here. Flat above 1000 kills. */
+/** Kill-count mastery scaling: +0.1% per kill, so the multiplier is 1.0 at
+ *  0 kills and 2.0 at 1000 kills, then flat above the cap. */
 export function killGainMultiplier(totalKills: number): number {
-  return 1 + Math.min(totalKills, 1000) * 0.01;
+  return 1 + Math.min(totalKills, 1000) * 0.001;
 }
 
 /** Mastery points awarded for one mastery event. */
