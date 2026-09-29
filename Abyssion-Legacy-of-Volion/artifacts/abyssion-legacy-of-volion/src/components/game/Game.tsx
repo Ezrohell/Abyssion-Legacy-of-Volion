@@ -14,6 +14,7 @@ import MainMenu from './MainMenu';
 import FadeTransition from './FadeTransition';
 import DebugOverlay from './DebugOverlay';
 import FModeOverlay from './FModeOverlay';
+import Toast from './Toast';
 import { useGameStore } from '@/lib/store';
 import { Smartphone } from 'lucide-react';
 
@@ -272,6 +273,7 @@ export default function Game() {
             <main>; fixed z-[200] so it sits above every modal. Toggle: F9.
             pointer-events-none and a pure reader — it never eats input. */}
         {showDebugOverlay && <DebugOverlay />}
+        <Toast />
       </main>
       <FadeTransition
         trigger={fadeTrigger}

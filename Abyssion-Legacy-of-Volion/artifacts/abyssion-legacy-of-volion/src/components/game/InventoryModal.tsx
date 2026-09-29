@@ -20,6 +20,7 @@ import { X, Search, ChevronDown, ArrowUpDown, Package, RotateCcw, Save } from 'l
 import { Canvas } from '@react-three/fiber';
 import { weaponCategoryOf, isRangedCategory } from '@/lib/items';
 import { masteryLevelFor, skillSlotsForWeapon, WEAPON_SKILL_UNLOCK_LEVELS } from '@/lib/progression';
+import { pushToast } from '@/lib/toast';
 import * as LucideIcons from 'lucide-react';
 import { useState, useCallback, useRef, useEffect, useMemo } from 'react';
 
@@ -288,7 +289,7 @@ function InventoryItemSlot(props: {
       onContextMenu={(e) => onContextMenu(e, cat, index)}
       className={`relative aspect-square rounded-md border-2 flex flex-col items-center justify-center cursor-pointer transition-all duration-150 hover:scale-105 ${
         RARITY_GLOW[def.rarity] ?? ''
-      } ${isDragged ? 'opacity-40 scale-90' : ''} ${
+      } ${isDragged ? (def.weightGrams >= 500 ? 'opacity-40 scale-90 animate-heavy-sway' : 'opacity-40 scale-90') : ''} ${
         isDropTarget ? 'border-blue-400 bg-blue-500/20 scale-105' : ''
       }`}
       style={{
@@ -689,7 +690,18 @@ export default function InventoryModal() {
     setDropTarget({ cat, index });
   };
   const handleDrop = (targetCat: ItemType, targetIndex: number) => {
-    if (!draggedSlot || draggedSlot.cat !== targetCat || draggedSlot.index === targetIndex) {
+    if (!draggedSlot) {
+      setDraggedSlot(null);
+      setDropTarget(null);
+      return;
+    }
+    if (draggedSlot.cat !== targetCat) {
+      pushToast("Hey, You stupid idiot, it's totally different category", 'warn');
+      setDraggedSlot(null);
+      setDropTarget(null);
+      return;
+    }
+    if (draggedSlot.index === targetIndex) {
       setDraggedSlot(null);
       setDropTarget(null);
       return;
@@ -1308,7 +1320,7 @@ export default function InventoryModal() {
                                 onContextMenu={(e) => handleContextMenu(e, cat, index)}
                                 className={`relative aspect-square rounded-md border-2 flex flex-col items-center justify-center cursor-pointer transition-all duration-150 hover:scale-105 ${
                                   RARITY_GLOW[def.rarity] ?? ''
-                                } ${isDragged ? 'opacity-40 scale-90' : ''} ${
+                                } ${isDragged ? (def.weightGrams >= 500 ? 'opacity-40 scale-90 animate-heavy-sway' : 'opacity-40 scale-90') : ''} ${
                                   isDropTarget ? 'border-blue-400 bg-blue-500/20 scale-105' : ''
                                 }`}
                                 style={{
