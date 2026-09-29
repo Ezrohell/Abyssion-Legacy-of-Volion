@@ -18,6 +18,7 @@ import { spawnArrow, updateArrows, resetArrows, getActiveArrows, type ArrowInsta
 import type { SwordSkill } from '@/lib/swordSkills';
 import { spawnSpell, updateSpells, resetSpells, getActiveSpells, spawnSlashBurst, tickSlashFx, resetSlashFx, getActiveSlashFx, type SpellInstance, type SwordSlashFx, type SpellCallbacks } from '@/lib/spellRunner';
 import { FATAMORGANA, DOZENS_OF_SLASHES, SWORD_SKILL_COOLDOWNS, type SwordSkillId } from '@/lib/swordSkills';
+import { masteryLevelFor, masteryPointsForEvent, statBonusMultiplier, isSkillUnlockedForWeapon, type SkillSlot } from '@/lib/progression';
 
 const SPEED = C.walkSpeed;
 
@@ -148,6 +149,62 @@ const CROSSBOW_SKILL_EDGES: { key: string; pressed: boolean; skill: CrossbowSkil
   { key: 'skill1', pressed: false, skill: CROSSBOW_SKILLS[0] },
   { key: 'skill2', pressed: false, skill: CROSSBOW_SKILLS[1] },
 ];
+
+// ── M2D1 #1 — mastery plumbing ──────────────────────────────────────────────
+// The edge tables above are already in slot order, so the slot letter for a
+// skill id reads straight off them: Z/X for every two-skill weapon, Z/X/C for
+// the staff, and Z/X/C/V/F for the Core (whose own skill records carry the
+// same letters). Built once at module load — no per-frame allocation.
+const SKILL_SLOT_BY_ID: Record<string, SkillSlot> = (() => {
+  const out: Record<string, SkillSlot> = {};
+  const assign = (skills: readonly { id: string }[], slots: readonly SkillSlot[]) => {
+    skills.forEach((skill, i) => {
+      const slot = slots[i];
+      if (slot) out[skill.id] = slot;
+    });
+  };
+  assign(WATER_STAFF_SKILLS, ['Z', 'X', 'C']);
+  assign([FATAMORGANA, DOZENS_OF_SLASHES], ['Z', 'X']);
+  assign(M1887_SKILLS, ['Z', 'X']);
+  assign(DAGGER_SKILLS, ['Z', 'X']);
+  assign(RESONANCE_SKILLS, ['Z', 'X', 'C', 'V', 'F']);
+  assign(CROSSBOW_SKILLS, ['Z', 'X']);
+  return out;
+})();
+
+/** M2D1 #1 — the held weapon id (null when the selected hotbar slot is empty). */
+function heldWeaponId(): string | null {
+  const hb = useGameStore.getState().hotbar;
+  return hb.slots[hb.selectedSlot] ?? null;
+}
+
+/** M2D1 #1 — mastery LEVEL for an item id; always derived from stored EXP. */
+function masteryLevelOf(itemId: string | null): number {
+  if (!itemId) return 0;
+  return masteryLevelFor(useGameStore.getState().player.mastery[itemId] ?? 0);
+}
+
+/** M2D1 #1 — mastery EXP for one successful skill activation. */
+function grantSkillMastery(itemId: string | null): void {
+  if (!itemId) return;
+  const st = useGameStore.getState();
+  st.addMasteryExp(itemId, masteryPointsForEvent('skill', st.player.totalKills));
+}
+
+/** M2D1 #1 — mastery EXP for one confirmed basic (M1) hit; never on a whiff. */
+function grantM1Mastery(itemId: string | null): void {
+  if (!itemId) return;
+  const st = useGameStore.getState();
+  st.addMasteryExp(itemId, masteryPointsForEvent('m1', st.player.totalKills));
+}
+
+/** M2D1 #1 — may `slot` fire for `itemId` at the current mastery level?
+ *  Fails closed for a slot the weapon does not own. The per-weapon unlock
+ *  table ships EMPTY, so every owned slot is open until it is filled. */
+function skillSlotAllowed(itemId: string | null, slot: SkillSlot | undefined): boolean {
+  if (!itemId || !slot) return false;
+  return isSkillUnlockedForWeapon(itemId, slot, masteryLevelOf(itemId));
+}
 
 export default function Player() {
   const rigidBodyRef = useRef<RapierRigidBody>(null);
@@ -391,6 +448,9 @@ export default function Player() {
     // frame. Shake is scaled by the damage fraction and the existing muzzle
     // flash becomes the M1887's fire-coloured bloom (0.08s, in place).
     if (hitAny) {
+      // M2D1 #1 — a confirmed shotgun hit is the M1887's M1 hit site. (Basic
+      // and skill shots share this one funnel, so both award the M1 points.)
+      grantM1Mastery(heldWeaponId());
       const hitSt = useGameStore.getState();
       hitSt.triggerHitStop(IMPACT.m1887.hitStopMs);
       hitSt.triggerCameraShake(IMPACT.m1887.shake * damageScaleOf(dmg, M1887_CONFIG.damagePerPellet * M1887_CONFIG.pellets));
@@ -966,10 +1026,12 @@ export default function Player() {
         const cds = skillCooldownRefs.current;
         cds[skill.id] = Math.max(0, (cds[skill.id] ?? 0) - effectiveDelta);
         if (pressed && !was && !isDodgingRef.current && cds[skill.id] <= 0) {
+          if (!skillSlotAllowed(selectedWeapon, SKILL_SLOT_BY_ID[skill.id])) continue;
           cds[skill.id] = SKILL_COOLDOWNS[skill.id];
           castAnimRef.current = 1;
           staffTrailAlphaRef.current = 1;
           useGameStore.getState().reportSkillFired(skill.id);
+          grantSkillMastery(selectedWeapon);
           // Cast origin: staff head (chest height, slightly ahead of player).
           _v1.set(translation.x, translation.y + 1.2, translation.z);
           const rotY = playerMeshRef.current.rotation.y;
@@ -1014,11 +1076,13 @@ export default function Player() {
           // first activation (undefined <= 0 is false).
           dcds[skill.id] = Math.max(0, (dcds[skill.id] ?? 0) - effectiveDelta);
           if (pressed && !was && !isDodgingRef.current && dcds[skill.id] <= 0) {
+            if (!skillSlotAllowed(selectedWeapon, SKILL_SLOT_BY_ID[skill.id])) continue;
             if (!dagSt.isItemSkillUnlocked('dual_dagger', DAGGER_SKILLS.indexOf(skill))) {
               dagSt.addNotification(`${skill.name} requires a higher weapon level.`);
             } else {
               dcds[skill.id] = DAGGER_SKILL_COOLDOWNS[skill.id];
               dagSt.reportSkillFired(skill.id);
+              grantSkillMastery(selectedWeapon);
               dagSt.grantItemExpById('dual_dagger', 8);
               if (skill.id === 'curse_of_hell') {
                 // Buff only — no direct damage. Applied through the
@@ -1114,8 +1178,10 @@ export default function Player() {
         const cds = swordSkillCooldownRefs.current;
         cds[skill.id] = Math.max(0, (cds[skill.id] ?? 0) - effectiveDelta);
         if (pressed && !was && !isDodgingRef.current && cds[skill.id] <= 0 && dashTimerRef.current <= 0) {
+          if (!skillSlotAllowed(selectedWeapon, SKILL_SLOT_BY_ID[skill.id])) continue;
           cds[skill.id] = SWORD_SKILL_COOLDOWNS[skill.id];
           useGameStore.getState().reportSkillFired(skill.id);
+          grantSkillMastery(selectedWeapon);
           if (skill.id === 'fatamorgana') {
             // Dash along current facing (XZ), authoritative body velocity.
             const rotY = playerMeshRef.current.rotation.y;
@@ -1237,6 +1303,7 @@ export default function Player() {
           if (pressed && !was && !isDodgingRef.current && gunCooldowns[skill.id] <= 0) {
           // Locked skills never fire — gameplay gates on the same progression
           // state the skill UI displays.
+          if (!skillSlotAllowed(selectedWeapon, SKILL_SLOT_BY_ID[skill.id])) continue;
           const skillIndex = M1887_SKILLS.indexOf(skill);
           if (!st.isItemSkillUnlocked('m1887', skillIndex)) {
             st.addNotification(`${skill.name} requires a higher weapon level.`);
@@ -1252,6 +1319,7 @@ export default function Player() {
           gunCooldowns[skill.id] = M1887_SKILL_COOLDOWNS[skill.id];
           gunAmmoRef.current -= skill.shellsUsed;
           st.reportSkillFired(skill.id);
+          grantSkillMastery(selectedWeapon);
           fireM1887Shot(skill.damageMultiplier, skillIndex);
           if (gunAmmoRef.current === 0) {
             gunReloadTimerRef.current = M1887_CONFIG.reloadSeconds;
@@ -1298,12 +1366,14 @@ export default function Player() {
           const was = prevCoreSkillInputRefs.current[skill.id] ?? false;
           prevCoreSkillInputRefs.current[skill.id] = pressed;
           if (pressed && !was && !isDodgingRef.current && coreCooldowns[skill.id] <= 0 && dashTimerRef.current <= 0) {
+            if (!skillSlotAllowed(selectedWeapon, SKILL_SLOT_BY_ID[skill.id])) continue;
             // Locked movement skill never fires — same progression gate as UI.
             if (!coreSt.isItemSkillUnlocked('resonance_core', RESONANCE_SKILLS.indexOf(skill))) {
               coreSt.addNotification(`${skill.name} requires a higher Core level.`);
             } else {
               coreCooldowns[skill.id] = RESONANCE_SKILL_COOLDOWNS[skill.id];
               coreSt.reportSkillFired(skill.id);
+              grantSkillMastery(selectedWeapon);
               const rotY = playerMeshRef.current.rotation.y;
               dashDirRef.current.set(Math.sin(rotY), 0, Math.cos(rotY)).normalize();
               dashTimerRef.current = 0.16;
@@ -1320,6 +1390,7 @@ export default function Player() {
         const was = prevCoreSkillInputRefs.current[skill.id] ?? false;
         prevCoreSkillInputRefs.current[skill.id] = pressed;
         if (pressed && !was && !isDodgingRef.current && coreCooldowns[skill.id] <= 0) {
+          if (!skillSlotAllowed(selectedWeapon, SKILL_SLOT_BY_ID[skill.id])) continue;
           // Locked skills never fire — gameplay gates on the same progression
           // state the skill UI displays.
           if (!coreSt.isItemSkillUnlocked('resonance_core', RESONANCE_SKILLS.indexOf(skill))) {
@@ -1329,6 +1400,7 @@ export default function Player() {
           }
           coreCooldowns[skill.id] = RESONANCE_SKILL_COOLDOWNS[skill.id];
           coreSt.reportSkillFired(skill.id);
+          grantSkillMastery(selectedWeapon);
           if (skill.id === 'resonant_overdrive') {
           coreTrailAlphaRef.current = 1;
             coreOverdriveRef.current = skill.duration!;
@@ -1427,6 +1499,8 @@ export default function Player() {
     const crossbowArrowCb = {
       onHit: (ev: ArrowHitEvent) => {
         bumpCrossbowStreak();
+        // M2D1 #1 — a confirmed arrow hit is the crossbow's M1 hit site.
+        grantM1Mastery(heldWeaponId());
         const hitSt = useGameStore.getState();
         hitSt.triggerHitStop(IMPACT.crossbow.hitStopMs);
         hitSt.triggerCameraShake(IMPACT.crossbow.shake * damageScaleOf(ev.damage, CROSSBOW_MAX_HIT_DAMAGE));
@@ -1519,6 +1593,7 @@ export default function Player() {
         const was = prevCrossbowSkillInputRefs.current[key] ?? false;
         prevCrossbowSkillInputRefs.current[key] = pressed;
         if (pressed && !was && !isDodgingRef.current && crossbowCooldowns[skill.id] <= 0) {
+          if (!skillSlotAllowed(selectedWeapon, SKILL_SLOT_BY_ID[skill.id])) continue;
           const skillIndex = CROSSBOW_SKILLS.indexOf(skill);
           if (!st.isItemSkillUnlocked('crossbow', skillIndex)) {
             st.addNotification(`${skill.name} requires a higher weapon level.`);
@@ -1542,6 +1617,7 @@ export default function Player() {
             crossbowAmmoRef.current -= TRIPLEX_LACTUS.arrowCount;
             crossbowCooldowns[skill.id] = CROSSBOW_SKILL_COOLDOWNS[skill.id];
             st.reportSkillFired(skill.id);
+            grantSkillMastery(selectedWeapon);
             st.reportSkillCooldown(skill.id, crossbowCooldowns[skill.id]);
             st.grantItemExpById('crossbow', 10);
           } else {
@@ -1552,6 +1628,7 @@ export default function Player() {
             }
             crossbowCooldowns[skill.id] = CROSSBOW_SKILL_COOLDOWNS[skill.id];
             st.reportSkillFired(skill.id);
+            grantSkillMastery(selectedWeapon);
             st.reportSkillCooldown(skill.id, crossbowCooldowns[skill.id]);
             st.grantItemExpById('crossbow', 8);
             mim.active = true;
@@ -1680,6 +1757,10 @@ export default function Player() {
         // basic attacks while the buff timer is active.
         const curseActive = daggerActive && curseOfHellTimerRef.current > 0;
         if (curseActive) damage = Math.round(damage * CURSE_OF_HELL.damageMultiplier);
+        // M2D1 #1 — mastery bonus applies to OUTGOING WEAPON DAMAGE ONLY.
+        // Deliberately NOT applied to attack speed, rate of fire, sprint
+        // stamina drain, or the dodge stamina cost.
+        damage = Math.round(damage * statBonusMultiplier(masteryLevelOf(selectedWeapon)));
 
         // Query enemy targets
         // E1b: the held melee weapon's impact row, resolved once for the swing.
@@ -1705,6 +1786,8 @@ export default function Player() {
                   const st = useGameStore.getState();
                   const hitItem = st.hotbar.slots[st.hotbar.selectedSlot];
                   if (hitItem) st.grantItemExpById(hitItem, 6);
+                  // M2D1 #1 — confirmed M1 hit: mastery for the held weapon.
+                  grantM1Mastery(hitItem);
                 }
                 useGameStore.getState().confirmComboHit();
                 // E1b: per-weapon hitstop and camera shake, shake scaled by the

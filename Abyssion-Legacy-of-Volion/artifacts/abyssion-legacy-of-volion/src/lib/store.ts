@@ -8,6 +8,7 @@ import { getItem, getItemIdByName, armourSlotOf, type ArmourSlot } from './items
 import { COMBAT_CONFIG } from './combatConfig';
 import { HudLayout, HudElementId, HudElementConfig, DEFAULT_HUD_LAYOUT, migrateHudLayout, SkillHudConfig, SkillHudEntry } from './hudConfig';
 import { ItemProgression, PlayerStats, createItemProgression, createPlayerStats, grantItemExp, isSkillUnlocked } from './progression';
+import { masteryPointsForEvent } from './progression';
 
 /** Each weapon/Core id owns independent EXP/level. Authoritative for skill
  *  unlocks; persisted with the save slot. Absent id ⇒ fresh progression. */
@@ -133,6 +134,13 @@ interface GameState {
     itemProgression: ItemProgressionMap;
     /** Authoritative stat block. Persisted. */
     stats: PlayerStats;
+    /** M2D1 #1 — lifetime kill count. Drives the mastery kill multiplier.
+     *  Persisted; reset on New Game. */
+    totalKills: number;
+    /** M2D1 #1 — per-item mastery EXP (itemId -> points). The LEVEL is always
+     *  derived from EXP via masteryLevelFor — never stored. Persisted; reset
+     *  on New Game. */
+    mastery: Record<string, number>;
     /** Four-piece armour system: independent per-slot equipped items.
      *  `equippedArmour` remains the aggregate damage-reduction reference for
      *  legacy code (first occupied slot) during migration. */
@@ -380,6 +388,9 @@ interface GameState {
   recordStaminaUse: () => void;
   /** Grant EXP to a specific weapon/Core item (per-item progression). */
   grantItemExpById: (itemId: string, amount: number) => void;
+  /** M2D1 #1 — add mastery EXP to one item. Level is recomputed on read;
+   *  never triggers a save, never clamps. */
+  addMasteryExp: (itemId: string, amount: number) => void;
   getItemLevel: (itemId: string) => number;
   isItemSkillUnlocked: (itemId: string, skillIndex: number) => boolean;
   /** Transient skill HUD state (cooldowns/fired flash). */
@@ -440,6 +451,11 @@ interface PersistedSaveData {
     checkpointPos: [number, number, number];
     /** Four-piece armour (M1W2D6 #4). Optional for legacy saves. */
     equippedArmourSlots?: Record<ArmourSlot, string | null>;
+    /** M2D1 #1 — lifetime kills and per-item mastery EXP. Optional so that
+     *  saves written before these fields existed still load: absent reads as
+     *  0 / {}. SAVE_SCHEMA_VERSION is deliberately NOT bumped. */
+    totalKills?: number;
+    mastery?: Record<string, number>;
   };
   quests: Quest[];
   completedQuestIds: string[];
@@ -827,6 +843,8 @@ export const useGameStore = create<GameState>((set, get) => ({
     inventory: createStarterInventory(),
     itemProgression: {},
     stats: createPlayerStats(),
+    totalKills: 0,
+    mastery: {},
     equippedArmourSlots: { helmet: null, chest: null, leggings: null, boots: null },
     equippedArmour: null,
     invincible: false,
@@ -1370,6 +1388,8 @@ export const useGameStore = create<GameState>((set, get) => ({
         inventory: createStarterInventory(),
         itemProgression: {},
         stats: createPlayerStats(),
+        totalKills: 0,
+        mastery: {},
         equippedArmourSlots: { helmet: null, chest: null, leggings: null, boots: null },
     equippedArmour: null,
         archetype: 'fighter',
@@ -2001,7 +2021,21 @@ export const useGameStore = create<GameState>((set, get) => ({
       encounterDefeats: state.encounterDefeats.includes(enemyName)
         ? state.encounterDefeats
         : [...state.encounterDefeats, enemyName],
+      player: { ...state.player, totalKills: state.player.totalKills + 1 },
     }));
+
+    // M2D1 #1 — the held weapon earns kill mastery, scaled by the lifetime
+    // kill counter incremented just above.
+    {
+      const killSt = get();
+      const heldKillWeapon = killSt.hotbar.slots[killSt.hotbar.selectedSlot];
+      if (heldKillWeapon) {
+        killSt.addMasteryExp(
+          heldKillWeapon,
+          masteryPointsForEvent('kill', killSt.player.totalKills),
+        );
+      }
+    }
 
     // Arena progression: 3 actual kills -> exactly one +1 level. The
     // exactly-once death guard above already prevents double counting.
@@ -2168,6 +2202,8 @@ export const useGameStore = create<GameState>((set, get) => ({
       checkpointPos,
       itemProgression,
       stats,
+      totalKills,
+      mastery,
       equippedArmourSlots,
       equippedArmour,
     } = state.player;
@@ -2190,6 +2226,8 @@ export const useGameStore = create<GameState>((set, get) => ({
         checkpointPos,
         itemProgression,
         stats,
+        totalKills,
+        mastery,
         equippedArmourSlots,
         equippedArmour,
         hotbar: { slots: [...state.hotbar.slots], selectedSlot: state.hotbar.selectedSlot },
@@ -2382,6 +2420,12 @@ export const useGameStore = create<GameState>((set, get) => ({
         stats: isRecord(loadedPlayer.stats)
           ? { ...createPlayerStats(), ...(loadedPlayer.stats as unknown as PlayerStats) }
           : createPlayerStats(),
+        // M2D1 #1 — persistence (additive). Saves without these keys load
+        // with the defaults; the schema version is not bumped.
+        totalKills: Math.max(0, Math.round(safeNumber(loadedPlayer.totalKills, 0))),
+        mastery: isRecord(loadedPlayer.mastery)
+          ? (loadedPlayer.mastery as Record<string, number>)
+          : {},
         equippedArmourSlots: (() => {
           const persisted = isRecord(loadedPlayer.equippedArmourSlots)
             ? (loadedPlayer.equippedArmourSlots as UnknownRecord) : {};
@@ -2641,6 +2685,17 @@ export const useGameStore = create<GameState>((set, get) => ({
   grantExp: (amount) => {
     get().addExp(amount);
     get().addNotification(`✨ +${amount} EXP (cheat)`);
+  },
+
+  addMasteryExp: (itemId, amount) => {
+    const cur = get().player.mastery[itemId] ?? 0;
+    const next = cur + amount;
+    set((state) => ({
+      player: {
+        ...state.player,
+        mastery: { ...state.player.mastery, [itemId]: next },
+      },
+    }));
   },
 
   grantItemExpById: (itemId, amount) => {

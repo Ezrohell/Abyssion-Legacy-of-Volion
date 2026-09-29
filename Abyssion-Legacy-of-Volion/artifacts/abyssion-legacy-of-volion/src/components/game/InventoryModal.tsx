@@ -19,6 +19,7 @@ import {
 import { X, Search, ChevronDown, ArrowUpDown, Package, RotateCcw, Save } from 'lucide-react';
 import { Canvas } from '@react-three/fiber';
 import { weaponCategoryOf, isRangedCategory } from '@/lib/items';
+import { masteryLevelFor, skillSlotsForWeapon, WEAPON_SKILL_UNLOCK_LEVELS } from '@/lib/progression';
 import * as LucideIcons from 'lucide-react';
 import { useState, useCallback, useRef, useEffect, useMemo } from 'react';
 
@@ -71,6 +72,31 @@ const RARITY_GLOW: Record<string, string> = {
   epic: 'shadow-[0_0_10px_rgba(168,85,247,0.4)]',
   legendary: 'shadow-[0_0_12px_rgba(245,158,11,0.5)]',
 };
+
+/** M2D1 #1 — Col 3 description panel: paper preset.
+ *  PAPER_TEXTURE_URL is an optional art override (null by default). When it is
+ *  non-null the CSS parchment gradient is dropped and the PNG supplies the
+ *  ground; the inset shading always applies. Nothing is fetched here. */
+const PAPER_TEXTURE_URL: string | null = null;
+const PAPER_INSET_SHADOW =
+  'inset 0 0 40px rgba(90,60,20,0.35), inset 0 0 4px rgba(0,0,0,0.35)';
+/** 3%-alpha linen noise. Painted OVER the parchment base: the radial gradient
+ *  below is opaque, so anything layered underneath it would be invisible. */
+const PAPER_NOISE =
+  'repeating-linear-gradient(0deg, rgba(0,0,0,0.03) 0px, rgba(0,0,0,0.03) 1px, rgba(0,0,0,0) 1px, rgba(0,0,0,0) 3px)';
+const PAPER_GRADIENT =
+  'radial-gradient(circle at 30% 20%, #f2e6c8 0%, #e6d5a8 45%, #c9b183 100%)';
+const PAPER_PANEL_STYLE: React.CSSProperties = PAPER_TEXTURE_URL
+  ? {
+      backgroundImage: `url(${PAPER_TEXTURE_URL})`,
+      backgroundSize: 'cover',
+      backgroundPosition: 'center',
+      boxShadow: PAPER_INSET_SHADOW,
+    }
+  : {
+      backgroundImage: `${PAPER_NOISE}, ${PAPER_GRADIENT}`,
+      boxShadow: PAPER_INSET_SHADOW,
+    };
 
 /** M2 #1 C1 — inventory-panel resize limits (px) and viewport gutter. */
 const PANEL_MIN_W = 480;
@@ -334,6 +360,11 @@ export default function InventoryModal() {
   const [discardTarget, setDiscardTarget] = useState<
     { cat: ItemType; index: number } | null
   >(null);
+  // M2D1 #1 — Col 3 description panel. `selectedSlot` is the clicked inventory
+  // slot; `descriptionPage` is the transient page index. Both are pure UI
+  // state, cleared on close, and never persisted to the store.
+  const [selectedSlot, setSelectedSlot] = useState<{ cat: ItemType; index: number } | null>(null);
+  const [descriptionPage, setDescriptionPage] = useState(0);
 
   const longPressTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const longPressFired = useRef(false);
@@ -390,6 +421,9 @@ export default function InventoryModal() {
       // M2 #2 C9 — transient menus must not survive a close.
       setContextMenu(null);
       setDiscardTarget(null);
+      // M2D1 #1 — the description selection is per-open UI state too.
+      setSelectedSlot(null);
+      setDescriptionPage(0);
     }
   }, [open]);
 
@@ -479,6 +513,123 @@ export default function InventoryModal() {
     [player.inventory]
   );
 
+  // ── M2D1 #1 — Col 3 description rows ─────────────────────────────────
+  // Derived from the selected slot alone. A row whose source data is empty is
+  // dropped entirely — no placeholder dash, no empty row. Pages split on row
+  // boundaries only (never mid-row), at most three of them.
+  const description = useMemo(() => {
+    const slot = selectedSlot
+      ? player.inventory.categories[selectedSlot.cat]?.[selectedSlot.index]
+      : null;
+    const def = slot ? getItem(slot.itemId) : null;
+    if (!def) return null;
+    const masteryLevel = masteryLevelFor(player.mastery?.[def.id] ?? 0);
+    const rows: { key: string; node: React.ReactNode }[] = [];
+    // 1. Name
+    if (def.name) {
+      rows.push({
+        key: 'name',
+        node: (
+          <div className="text-lg font-bold leading-tight" style={{ color: RARITY_COLORS[def.rarity] }}>
+            {def.name}
+          </div>
+        ),
+      });
+    }
+    // 2. Rarity
+    if (def.rarity) {
+      rows.push({
+        key: 'rarity',
+        node: <div className="text-xs uppercase tracking-widest text-amber-950/70">{def.rarity}</div>,
+      });
+    }
+    // 3. Type (+ the archetypeFit line when one is set)
+    if (def.type) {
+      rows.push({
+        key: 'type',
+        node: (
+          <div className="flex flex-col gap-0.5">
+            <div className="text-sm text-amber-950/90">{def.type}</div>
+            {def.archetypeFit !== '' && (
+              <div className="text-xs italic text-amber-950/70">
+                This weapon looks like it was created for {def.archetypeFit}.
+              </div>
+            )}
+          </div>
+        ),
+      });
+    }
+    // 4. Mastery — bar + level readout (level is always derived from EXP)
+    rows.push({
+      key: 'mastery',
+      node: (
+        <div className="flex flex-col gap-1">
+          <div className="text-xs uppercase tracking-widest text-amber-950/70">Mastery</div>
+          <div className="h-1.5 rounded-full overflow-hidden bg-amber-950/25">
+            <div className="h-full bg-amber-700" style={{ width: `${(masteryLevel / 999) * 100}%` }} />
+          </div>
+          <div className="text-xs text-amber-950/80">{masteryLevel} / 999</div>
+        </div>
+      ),
+    });
+    // 5. Stats — each line only when its source value is non-zero
+    const statLines: React.ReactNode[] = [];
+    if (def.attackSpeed !== 0) {
+      statLines.push(<div key="as" className="text-sm text-amber-950/90">Attack Speed: {def.attackSpeed}</div>);
+    }
+    if (def.rateOfFireHold !== 0) {
+      statLines.push(<div key="rfh" className="text-sm text-amber-950/90">Rate of Fire (Hold): {def.rateOfFireHold}</div>);
+    }
+    if (def.rateOfFireClick !== 0) {
+      statLines.push(<div key="rfc" className="text-sm text-amber-950/90">Rate of Fire (Click): {def.rateOfFireClick}</div>);
+    }
+    if (statLines.length > 0) {
+      rows.push({
+        key: 'stats',
+        node: (
+          <div className="flex flex-col gap-0.5">
+            <div className="text-xs uppercase tracking-widest text-amber-950/70">Stats</div>
+            {statLines}
+          </div>
+        ),
+      });
+    }
+    // 6. Skills — one row per slot this weapon actually owns
+    const skillRows = skillSlotsForWeapon(def.id).map((skillSlot) => {
+      const required = WEAPON_SKILL_UNLOCK_LEVELS[def.id]?.[skillSlot];
+      const locked = required !== undefined && masteryLevel < required;
+      return (
+        <div key={skillSlot} className="flex items-center justify-between gap-2 text-xs text-amber-950/90">
+          <span className="font-bold">{skillSlot}</span>
+          <span>{locked ? `Locked L${required}` : 'Unlocked'}</span>
+        </div>
+      );
+    });
+    if (skillRows.length > 0) {
+      rows.push({
+        key: 'skills',
+        node: (
+          <div className="flex flex-col gap-0.5">
+            <div className="text-xs uppercase tracking-widest text-amber-950/70">Skills</div>
+            {skillRows}
+          </div>
+        ),
+      });
+    }
+    // 7. Description
+    if (def.description) {
+      rows.push({
+        key: 'description',
+        node: <div className="text-sm leading-snug text-amber-950/90">{def.description}</div>,
+      });
+    }
+    // Page split: at most 3 pages, boundaries on whole rows, all rows shown.
+    const perPage = Math.max(3, Math.ceil(rows.length / 3));
+    const pageCount = Math.max(1, Math.min(3, Math.ceil(rows.length / perPage)));
+    const page = Math.max(0, Math.min(descriptionPage, pageCount - 1));
+    return { rows, page, pageCount, perPage };
+  }, [selectedSlot, descriptionPage, player.inventory, player.mastery]);
+
   const handleSlotClick = useCallback(
     (def: ItemDef) => {
       if (longPressFired.current) {
@@ -525,6 +676,9 @@ export default function InventoryModal() {
   // --- Drag & drop (desktop HTML5 DnD) ---
   const handleDragStart = (cat: ItemType, index: number) => {
     setDraggedSlot({ cat, index });
+    // M2D1 #1 — a drag is not a click: it must not select for the description.
+    setSelectedSlot(null);
+    setDescriptionPage(0);
   };
   const handleDragEnd = () => {
     setDraggedSlot(null);
@@ -1139,6 +1293,11 @@ export default function InventoryModal() {
                                 draggable
                                 onDragStart={() => handleDragStart(cat, index)}
                                 onDragEnd={handleDragEnd}
+                                onClick={() => {
+                                  // M2D1 #1 — single click selects for Col 3.
+                                  setSelectedSlot({ cat, index });
+                                  setDescriptionPage(0);
+                                }}
                                 onDragOver={(e) => handleDragOver(e, cat, index)}
                                 onDrop={() => handleDrop(cat, index)}
                                 onPointerDown={(e) => handlePointerDown(cat, index, e)}
@@ -1205,8 +1364,46 @@ export default function InventoryModal() {
 
           </div>{/* end Col 2 */}
 
-          {/* Col 3 (25%) — reserved description panel (empty placeholder). */}
-          <div className="basis-1/4 min-w-0" aria-hidden />
+          {/* Col 3 (25%) — live item description panel (M2D1 #1). */}
+          <div className="flex flex-col basis-1/4 min-w-0 min-h-0">
+            {!description ? (
+              <div className="p-4 text-sm text-gray-400">Select an item.</div>
+            ) : (
+              <div
+                className="flex flex-col flex-1 min-h-0 rounded-lg overflow-hidden"
+                style={PAPER_PANEL_STYLE}
+              >
+                <div className="flex-1 min-h-0 overflow-y-auto p-4 flex flex-col gap-3">
+                  {description.rows
+                    .slice(description.page * description.perPage, (description.page + 1) * description.perPage)
+                    .map((row) => (
+                      <div key={row.key}>{row.node}</div>
+                    ))}
+                </div>
+                {description.pageCount > 1 && (
+                  <div className="shrink-0 flex items-center justify-between gap-2 px-3 py-2 border-t border-black/20 bg-black/5">
+                    <button
+                      onClick={() => setDescriptionPage((p) => Math.max(0, p - 1))}
+                      disabled={description.page <= 0}
+                      className="px-2 py-1 text-xs rounded border border-amber-950/30 text-amber-950/80 disabled:opacity-40"
+                    >
+                      Prev
+                    </button>
+                    <span className="text-xs text-amber-950/70">
+                      {description.page + 1} / {description.pageCount}
+                    </span>
+                    <button
+                      onClick={() => setDescriptionPage((p) => Math.min(description.pageCount - 1, p + 1))}
+                      disabled={description.page >= description.pageCount - 1}
+                      className="px-2 py-1 text-xs rounded border border-amber-950/30 text-amber-950/80 disabled:opacity-40"
+                    >
+                      Next
+                    </button>
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
 
         </div>{/* end body row */}
 

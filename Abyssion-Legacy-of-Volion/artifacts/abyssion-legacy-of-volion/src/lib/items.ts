@@ -1,3 +1,8 @@
+import { M1887_CONFIG } from './weaponContent';
+import { CROSSBOW_CONFIG } from './crossbowContent';
+import { COMBAT_CONFIG } from './combatConfig';
+import { ARCHETYPE_WEAPONS } from './archetype';
+
 export type ItemType = 'weapon' | 'consumable' | 'material' | 'equipment' | 'key';
 
 /** Weapon/Core category as used by the hotbar and progression systems. */
@@ -58,6 +63,19 @@ export interface ItemDef {
   maxStack: number;
   value: number;
   metadata?: Record<string, unknown>;
+  /** M2D1 #1 — per-item placeholder, always 0. Runtime mastery lives on
+   *  player.mastery[itemId] and is never read from here. */
+  mastery: number;
+  /** M2D1 #1 — multiplicative melee attack speed (1.0 = neutral, 0 = N/A). */
+  attackSpeed: number;
+  /** M2D1 #1 — shots per second while the trigger is held (0 = N/A). */
+  rateOfFireHold: number;
+  /** M2D1 #1 — shots per second per click (0 = N/A). */
+  rateOfFireClick: number;
+  /** M2D1 #1 — stamina multiplier for this weapon (1.0 = neutral, 0 = N/A). */
+  staminaUsage: number;
+  /** M2D1 #1 — archetype this item was designed for ('' when unset). */
+  archetypeFit: string;
 }
 
 export const RARITY_COLORS: Record<ItemRarity, string> = {
@@ -68,9 +86,23 @@ export const RARITY_COLORS: Record<ItemRarity, string> = {
   legendary: '#f59e0b',
 };
 
+/** Archetype a weapon was designed for ('' when no archetype claims it).
+ *  Derived from the authoritative ARCHETYPE_WEAPONS table (M2D1 #1). */
+function archetypeFitFor(itemId: string): string {
+  if (ARCHETYPE_WEAPONS.fighter.includes(itemId)) return 'fighter';
+  if (ARCHETYPE_WEAPONS.mage.includes(itemId)) return 'mage';
+  return '';
+}
+
 const ITEMS: Record<string, ItemDef> = {
   wooden_sword: {
     id: 'wooden_sword',
+    mastery: 0,
+    attackSpeed: 1,
+    rateOfFireHold: 0,
+    rateOfFireClick: 0,
+    staminaUsage: COMBAT_CONFIG.dodgeStaminaCost,
+    archetypeFit: archetypeFitFor('wooden_sword'),
     name: 'Wooden Sword',
     description: 'A basic training sword. Better than nothing.',
     rarity: 'common',
@@ -81,6 +113,12 @@ const ITEMS: Record<string, ItemDef> = {
   },
   iron_sword: {
     id: 'iron_sword',
+    mastery: 0,
+    attackSpeed: 1,
+    rateOfFireHold: 0,
+    rateOfFireClick: 0,
+    staminaUsage: COMBAT_CONFIG.dodgeStaminaCost,
+    archetypeFit: archetypeFitFor('iron_sword'),
     name: 'Iron Sword',
     description: 'A sturdy iron blade forged by a master blacksmith.',
     rarity: 'uncommon',
@@ -91,6 +129,12 @@ const ITEMS: Record<string, ItemDef> = {
   },
   health_potion: {
     id: 'health_potion',
+    mastery: 0,
+    attackSpeed: 0,
+    rateOfFireHold: 0,
+    rateOfFireClick: 0,
+    staminaUsage: 0,
+    archetypeFit: '',
     name: 'Health Potion',
     description: 'Restores 40 HP. A staple for any adventurer.',
     rarity: 'uncommon',
@@ -102,6 +146,12 @@ const ITEMS: Record<string, ItemDef> = {
   },
   small_potion: {
     id: 'small_potion',
+    mastery: 0,
+    attackSpeed: 0,
+    rateOfFireHold: 0,
+    rateOfFireClick: 0,
+    staminaUsage: 0,
+    archetypeFit: '',
     name: 'Small Potion',
     description: 'Restores 25 HP. A cheaper alternative for minor wounds.',
     rarity: 'common',
@@ -113,6 +163,12 @@ const ITEMS: Record<string, ItemDef> = {
   },
   bread: {
     id: 'bread',
+    mastery: 0,
+    attackSpeed: 0,
+    rateOfFireHold: 0,
+    rateOfFireClick: 0,
+    staminaUsage: 0,
+    archetypeFit: '',
     name: 'Bread',
     description: 'Restores 20 HP. Simple but filling.',
     rarity: 'common',
@@ -124,6 +180,12 @@ const ITEMS: Record<string, ItemDef> = {
   },
   apple: {
     id: 'apple',
+    mastery: 0,
+    attackSpeed: 0,
+    rateOfFireHold: 0,
+    rateOfFireClick: 0,
+    staminaUsage: 0,
+    archetypeFit: '',
     name: 'Apple',
     description: 'Restores 15 HP. A quick snack from the orchard.',
     rarity: 'common',
@@ -135,6 +197,12 @@ const ITEMS: Record<string, ItemDef> = {
   },
   iron_ore: {
     id: 'iron_ore',
+    mastery: 0,
+    attackSpeed: 0,
+    rateOfFireHold: 0,
+    rateOfFireClick: 0,
+    staminaUsage: 0,
+    archetypeFit: '',
     name: 'Iron Ore',
     description: 'Raw iron recovered from bandit gear. Used for forging.',
     rarity: 'uncommon',
@@ -145,6 +213,12 @@ const ITEMS: Record<string, ItemDef> = {
   },
   arcane_shard: {
     id: 'arcane_shard',
+    mastery: 0,
+    attackSpeed: 0,
+    rateOfFireHold: 0,
+    rateOfFireClick: 0,
+    staminaUsage: 0,
+    archetypeFit: '',
     name: 'Arcane Shard',
     description: 'A fragment of crystallized magic energy.',
     rarity: 'rare',
@@ -155,6 +229,12 @@ const ITEMS: Record<string, ItemDef> = {
   },
   water_staff: {
     id: 'water_staff',
+    mastery: 0,
+    attackSpeed: 1,
+    rateOfFireHold: 0,
+    rateOfFireClick: 0,
+    staminaUsage: COMBAT_CONFIG.dodgeStaminaCost,
+    archetypeFit: archetypeFitFor('water_staff'),
     name: 'Water Staff',
     description: 'A runed staff that channels water magic. Ranged, precise, patient.',
     rarity: 'uncommon',
@@ -165,6 +245,12 @@ const ITEMS: Record<string, ItemDef> = {
   },
   dual_dagger: {
     id: 'dual_dagger',
+    mastery: 0,
+    attackSpeed: 1,
+    rateOfFireHold: 0,
+    rateOfFireClick: 0,
+    staminaUsage: COMBAT_CONFIG.dodgeStaminaCost,
+    archetypeFit: archetypeFitFor('dual_dagger'),
     name: 'Dual Daggers',
     description: 'A matched pair of quick blades. Blued steel in the left hand, bright in the right.',
     rarity: 'uncommon',
@@ -176,6 +262,12 @@ const ITEMS: Record<string, ItemDef> = {
   // ── Marcus Shop Food Items ───────────────────────────────────
   crispy_chicken: {
     id: 'crispy_chicken',
+    mastery: 0,
+    attackSpeed: 0,
+    rateOfFireHold: 0,
+    rateOfFireClick: 0,
+    staminaUsage: 0,
+    archetypeFit: '',
     name: 'Crispy Chicken',
     description: 'Golden fried chicken with a crunchy coating. Heals 30 HP.',
     rarity: 'common',
@@ -187,6 +279,12 @@ const ITEMS: Record<string, ItemDef> = {
   },
   chicken_steak: {
     id: 'chicken_steak',
+    mastery: 0,
+    attackSpeed: 0,
+    rateOfFireHold: 0,
+    rateOfFireClick: 0,
+    staminaUsage: 0,
+    archetypeFit: '',
     name: 'Chicken Steak',
     description: 'Juicy grilled chicken breast. Heals 35 HP.',
     rarity: 'common',
@@ -198,6 +296,12 @@ const ITEMS: Record<string, ItemDef> = {
   },
   beef_steak: {
     id: 'beef_steak',
+    mastery: 0,
+    attackSpeed: 0,
+    rateOfFireHold: 0,
+    rateOfFireClick: 0,
+    staminaUsage: 0,
+    archetypeFit: '',
     name: 'Beef Steak',
     description: 'A thick, sizzling beef steak. Heals 50 HP.',
     rarity: 'uncommon',
@@ -209,6 +313,12 @@ const ITEMS: Record<string, ItemDef> = {
   },
   chicken_katsu: {
     id: 'chicken_katsu',
+    mastery: 0,
+    attackSpeed: 0,
+    rateOfFireHold: 0,
+    rateOfFireClick: 0,
+    staminaUsage: 0,
+    archetypeFit: '',
     name: 'Chicken Katsu',
     description: 'Crispy breaded chicken cutlet. Heals 40 HP.',
     rarity: 'common',
@@ -220,6 +330,12 @@ const ITEMS: Record<string, ItemDef> = {
   },
   kebab: {
     id: 'kebab',
+    mastery: 0,
+    attackSpeed: 0,
+    rateOfFireHold: 0,
+    rateOfFireClick: 0,
+    staminaUsage: 0,
+    archetypeFit: '',
     name: 'Kebab',
     description: 'Grilled skewer of seasoned meat. Heals 28 HP.',
     rarity: 'common',
@@ -231,6 +347,12 @@ const ITEMS: Record<string, ItemDef> = {
   },
   shawarma: {
     id: 'shawarma',
+    mastery: 0,
+    attackSpeed: 0,
+    rateOfFireHold: 0,
+    rateOfFireClick: 0,
+    staminaUsage: 0,
+    archetypeFit: '',
     name: 'Shawarma',
     description: 'Rolled flatbread with spiced meat and sauce. Heals 32 HP.',
     rarity: 'common',
@@ -242,6 +364,12 @@ const ITEMS: Record<string, ItemDef> = {
   },
   m1887: {
     id: 'm1887',
+    mastery: 0,
+    attackSpeed: 0,
+    rateOfFireHold: 0,
+    rateOfFireClick: M1887_CONFIG.shotsPerSecond,
+    staminaUsage: COMBAT_CONFIG.dodgeStaminaCost,
+    archetypeFit: '',
     name: 'M1887',
     description: 'Lever-action shotgun. 2 shells, 8 pellets, devastating up close.',
     rarity: 'rare',
@@ -253,8 +381,14 @@ const ITEMS: Record<string, ItemDef> = {
   },
   crossbow: {
     id: 'crossbow',
+    mastery: 0,
+    attackSpeed: 0,
+    rateOfFireHold: 1 / CROSSBOW_CONFIG.fireIntervalHold,
+    rateOfFireClick: 1 / CROSSBOW_CONFIG.fireIntervalClick,
+    staminaUsage: COMBAT_CONFIG.dodgeStaminaCost,
+    archetypeFit: '',
     name: 'Crossbow',
-    description: 'A weighted hunting crossbow. 16 arrows per supply, steady 4 arrows per second. Skins: Triplex Lactus / Mimique de Ametralladora.',
+    description: 'A weighted hunting crossbow. 16 arrows per supply, 3.5 arrows per second (click) / 2 arrows per second (hold). Skins: Triplex Lactus / Mimique de Ametralladora.',
     rarity: 'rare',
     icon: 'Target',
     type: 'weapon',
@@ -264,6 +398,12 @@ const ITEMS: Record<string, ItemDef> = {
   },
   resonance_core: {
     id: 'resonance_core',
+    mastery: 0,
+    attackSpeed: 1,
+    rateOfFireHold: 0,
+    rateOfFireClick: 0,
+    staminaUsage: COMBAT_CONFIG.dodgeStaminaCost,
+    archetypeFit: '',
     name: 'Resonance Core',
     description: 'A conceptual Abyssal Core attuned to vibration and harmonic frequency.',
     rarity: 'epic',
@@ -275,6 +415,12 @@ const ITEMS: Record<string, ItemDef> = {
   },
   thornback_spine: {
     id: 'thornback_spine',
+    mastery: 0,
+    attackSpeed: 0,
+    rateOfFireHold: 0,
+    rateOfFireClick: 0,
+    staminaUsage: 0,
+    archetypeFit: '',
     name: 'Thornback Spine',
     description: 'A barbed spine shed by a Thornback. Prized by crafters.',
     rarity: 'uncommon',
@@ -285,6 +431,12 @@ const ITEMS: Record<string, ItemDef> = {
   },
   arrow_bundle: {
     id: 'arrow_bundle',
+    mastery: 0,
+    attackSpeed: 0,
+    rateOfFireHold: 0,
+    rateOfFireClick: 0,
+    staminaUsage: 0,
+    archetypeFit: '',
     name: 'Arrow Bundle',
     description: 'A bundle of 8 crossbow arrows. Restores ammunition when picked up (up to the crossbow capacity).',
     rarity: 'common',
@@ -296,6 +448,12 @@ const ITEMS: Record<string, ItemDef> = {
   },
   leather_armour: {
     id: 'leather_armour',
+    mastery: 0,
+    attackSpeed: 0,
+    rateOfFireHold: 0,
+    rateOfFireClick: 0,
+    staminaUsage: 0,
+    archetypeFit: '',
     name: 'Leather Armour',
     description: 'Hardened leather cuirass. Reduces incoming damage by 5%.',
     rarity: 'uncommon',
@@ -307,6 +465,12 @@ const ITEMS: Record<string, ItemDef> = {
   },
   iron_helmet: {
     id: 'iron_helmet',
+    mastery: 0,
+    attackSpeed: 0,
+    rateOfFireHold: 0,
+    rateOfFireClick: 0,
+    staminaUsage: 0,
+    archetypeFit: '',
     name: 'Iron Helmet',
     description: 'Forged iron helm. Reduces incoming damage by 2%.',
     rarity: 'uncommon',
@@ -318,6 +482,12 @@ const ITEMS: Record<string, ItemDef> = {
   },
   iron_leggings: {
     id: 'iron_leggings',
+    mastery: 0,
+    attackSpeed: 0,
+    rateOfFireHold: 0,
+    rateOfFireClick: 0,
+    staminaUsage: 0,
+    archetypeFit: '',
     name: 'Iron Leggings',
     description: 'Plated iron greaves. Reduces incoming damage by 3%.',
     rarity: 'uncommon',
@@ -329,6 +499,12 @@ const ITEMS: Record<string, ItemDef> = {
   },
   iron_boots: {
     id: 'iron_boots',
+    mastery: 0,
+    attackSpeed: 0,
+    rateOfFireHold: 0,
+    rateOfFireClick: 0,
+    staminaUsage: 0,
+    archetypeFit: '',
     name: 'Iron Boots',
     description: 'Heavy reinforced boots. Reduces incoming damage by 2%.',
     rarity: 'uncommon',

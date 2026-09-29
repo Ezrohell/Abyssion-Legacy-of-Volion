@@ -8,7 +8,9 @@
  * No global EXP pool: Sword A ≠ Sword B, Core A ≠ Core B.
  */
 
-export type WeaponCategory = 'sword' | 'gun' | 'core' | 'dagger';
+import { weaponCategoryOf, type WeaponCategory } from './items';
+
+export type { WeaponCategory };
 
 /** EXP required to go from level N to N+1. Simple thresholds, not over-engineered. */
 export function expForLevel(level: number): number {
@@ -96,6 +98,116 @@ export function categoryStatKey(cat: WeaponCategory): keyof PlayerStats | null {
     case 'gun': return 'gun';
     case 'core': return 'abyssal';
     case 'dagger': return 'fightingStyle';
+    case 'staff': return 'staff';
     default: return null;
   }
+}
+
+// ── M2D1 #1 — Mastery ──────────────────────────────────────────────────────
+// Player-side mastery is a pure function of the EXP held in
+// player.mastery[itemId]. Level is always DERIVED, never stored. This is a
+// separate curve from the older 1-based item-progression system above
+// (MAX_ITEM_LEVEL / SKILL_UNLOCK_LEVELS / ItemProgression) — that system is
+// untouched and unrelated.
+
+/** Skill-slot letters. The Core owns all five; every other weapon the first
+ *  two (the staff keeps a third). Mirrors the skill bar's own labelling. */
+export type SkillSlot = 'Z' | 'F' | 'X' | 'C' | 'V';
+
+/** Cumulative mastery points required to BE at `level`.
+ *
+ *    cost(1) = 10                       (the tutorial segment)
+ *    cost(N) = 10 * 2^(N-1)   for N in 2..50
+ *    cost(N) = cost(N-1) * 1.5 for N in 51..999
+ *
+ *  CAPPED: the cumulative sum passes Number.MAX_SAFE_INTEGER partway through
+ *  level 50 (level 50 alone already needs ~1.126e16), so every level at or
+ *  after the crossing point returns Number.MAX_SAFE_INTEGER. No BigInt, and
+ *  this never throws. */
+export function masteryThreshold(level: number): number {
+  const target = Math.floor(level);
+  if (!Number.isFinite(target) || target <= 0) return 0;
+  const capped = Math.min(target, 999);
+  let cost = 10; // cost(1)
+  let total = 0;
+  for (let n = 1; n <= capped; n += 1) {
+    if (n > 1) cost = n <= 50 ? cost * 2 : cost * 1.5;
+    total += cost;
+    // Safe-integer cap: stop accumulating rather than silently lose precision.
+    if (total >= Number.MAX_SAFE_INTEGER) return Number.MAX_SAFE_INTEGER;
+  }
+  return total;
+}
+
+/** Highest level L in [0, 999] with masteryThreshold(L) <= exp. */
+export function masteryLevelFor(exp: number): number {
+  if (!Number.isFinite(exp) || exp <= 0) return 0;
+  let lo = 0;
+  let hi = 999;
+  while (lo < hi) {
+    const mid = Math.ceil((lo + hi) / 2);
+    if (masteryThreshold(mid) <= exp) lo = mid;
+    else hi = mid - 1;
+  }
+  return lo;
+}
+
+/** Kill-count mastery scaling: +1% per kill, capped at 1000 kills.
+ *  NOTE the cap value is 11.0 at 1000 kills (1 + 1000 * 0.01), not 2.0 —
+ *  the spec's formula and its "doubles at 1000 kills" prose disagree, and
+ *  the formula is what ships here. Flat above 1000 kills. */
+export function killGainMultiplier(totalKills: number): number {
+  return 1 + Math.min(totalKills, 1000) * 0.01;
+}
+
+/** Mastery points awarded for one mastery event. */
+export function masteryPointsForEvent(
+  kind: 'skill' | 'm1' | 'kill',
+  totalKills: number,
+): number {
+  switch (kind) {
+    case 'skill': return 3;
+    case 'm1': return 0.5;
+    case 'kill': return 5 * killGainMultiplier(totalKills);
+  }
+}
+
+/** Additive per-mastery-level bonus: level 0 → 1.0, level 10 → 2.0. */
+export function statBonusMultiplier(masteryLevel: number): number {
+  return 1 + masteryLevel * 0.1;
+}
+
+/** Which skill slots a weapon category owns. */
+export const WEAPON_SKILL_SLOTS: Record<WeaponCategory, readonly SkillSlot[]> = {
+  core: ['Z', 'F', 'X', 'C', 'V'],
+  sword: ['Z', 'X'],
+  dagger: ['Z', 'X'],
+  gun: ['Z', 'X'],
+  staff: ['Z', 'X', 'C'],
+};
+
+/** Per-weapon mastery level required for a slot. Deliberately EMPTY: an absent
+ *  entry means "unlocked at any mastery level". Nothing here invents
+ *  thresholds — the operator fills this table. */
+export const WEAPON_SKILL_UNLOCK_LEVELS: Record<string, Partial<Record<SkillSlot, number>>> = {};
+
+/** Skill slots owned by a weapon id ([] when the id is not a weapon/Core). */
+export function skillSlotsForWeapon(itemId: string): readonly SkillSlot[] {
+  const cat = weaponCategoryOf(itemId);
+  if (!cat) return [];
+  return WEAPON_SKILL_SLOTS[cat] ?? [];
+}
+
+/** Is `slot` unlocked for `itemId` at `masteryLevel`? Fails closed for a slot
+ *  the weapon does not own; otherwise unlocked unless a per-weapon threshold
+ *  exists in WEAPON_SKILL_UNLOCK_LEVELS (empty at HEAD). */
+export function isSkillUnlockedForWeapon(
+  itemId: string,
+  slot: SkillSlot,
+  masteryLevel: number,
+): boolean {
+  if (!skillSlotsForWeapon(itemId).includes(slot)) return false;
+  const required = WEAPON_SKILL_UNLOCK_LEVELS[itemId]?.[slot];
+  if (required === undefined) return true;
+  return masteryLevel >= required;
 }
