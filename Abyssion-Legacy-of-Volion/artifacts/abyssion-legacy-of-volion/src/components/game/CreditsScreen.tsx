@@ -4,12 +4,13 @@ import { ChevronLeft } from 'lucide-react';
 
 const FOUNDERS = [
   { role: 'Founder / Lead Developer', name: 'EZROHELL' },
-  { role: 'Co-Founder / Technical Support', name: 'Valz-san' },
+  { role: 'Co-Founder / Technical Support', name: 'VALZSAN' },
+  { role: 'Co-Founder / Lead Marketing', name: 'ALGANDJA' },
 ];
 
 const SPECIAL_THANKS = [
-  'Our Testers',
-  'Our Early Alpha Players',
+  'Our Testers; Aoi, Grimm, Arkk, L, Didamba',
+  'Our Early Alpha Players; Yamada, Colt, Overmaster, Hans, Kaze',
   'Playtesters & Feedback Contributors',
   'Friends & Community',
   'Everyone who contributed development feedback',
@@ -21,34 +22,8 @@ const SPECIAL_THANKS = [
  * section records responsibilities, not team size.
  */
 const PRODUCTION_CREDITS: { department: string; name: string }[] = [
-  { department: 'GAME DIRECTION & DESIGN', name: 'EZROHELL' },
-  { department: 'GAMEPLAY PROGRAMMING', name: 'EZROHELL' },
-  { department: 'COMBAT SYSTEMS', name: 'EZROHELL' },
-  { department: 'PLAYER CONTROLLER & MOVEMENT SYSTEMS', name: 'EZROHELL' },
-  { department: 'GAME SYSTEMS PROGRAMMING', name: 'EZROHELL' },
-  { department: 'PROGRESSION & CHARACTER SYSTEMS', name: 'EZROHELL' },
-  { department: 'INVENTORY & EQUIPMENT SYSTEMS', name: 'EZROHELL' },
-  { department: 'WEAPON SYSTEMS', name: 'EZROHELL' },
-  { department: 'ABILITY & SKILL SYSTEMS', name: 'EZROHELL' },
-  { department: 'NPC & INTERACTION SYSTEMS', name: 'EZROHELL' },
-  { department: 'QUEST & REWARD SYSTEMS', name: 'EZROHELL' },
-  { department: 'SAVE / LOAD & PERSISTENCE SYSTEMS', name: 'EZROHELL' },
-  { department: 'UI / UX SYSTEMS', name: 'EZROHELL' },
-  { department: 'HUD & HUD EDITOR', name: 'EZROHELL' },
-  { department: 'MAP & MINIMAP SYSTEMS', name: 'EZROHELL' },
-  { department: 'WORLD & LEVEL DESIGN', name: 'EZROHELL' },
-  { department: 'WORLD SYSTEMS', name: 'EZROHELL' },
-  { department: 'ART & VISUAL DIRECTION', name: 'EZROHELL' },
-  { department: 'ANIMATION SYSTEMS', name: 'EZROHELL' },
-  { department: 'AUDIO & SOUND DIRECTION', name: 'EZROHELL' },
-  { department: 'TECHNICAL ARCHITECTURE', name: 'EZROHELL' },
-  { department: 'PERFORMANCE & OPTIMIZATION', name: 'EZROHELL' },
-  { department: 'QUALITY ASSURANCE & VALIDATION', name: 'EZROHELL' },
-  { department: 'BUILD & INTEGRATION', name: 'EZROHELL' },
-  { department: 'NATIVE ENGINE DEVELOPMENT', name: 'EZROHELL' },
-  { department: 'TECHNICAL DOCUMENTATION', name: 'EZROHELL' },
-  { department: 'WRITING & NARRATIVE DESIGN', name: 'EZROHELL' },
-  { department: 'TECHNICAL SUPPORT', name: 'Valz-san' },
+  { department: 'LEAD DEVELOPER', name: 'EZROHELL' },
+  { department: 'TECHNICAL SUPPORT', name: 'VALZSAN' },
   { department: 'BUSINESS DEVELOPMENT & MARKETING LEAD', name: 'ALGANDJA' },
 ];
 
