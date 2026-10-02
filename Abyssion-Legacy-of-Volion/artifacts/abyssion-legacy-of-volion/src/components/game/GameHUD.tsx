@@ -4,6 +4,7 @@ import { useGameStore } from '@/lib/store';
 import { HUD_CONFIG as H, HudElementId, HudElementConfig, DRAGGABLE_HUD_ELEMENTS } from '@/lib/hudConfig';
 import { Camera, MessageSquare, X } from 'lucide-react';
 import { getItemCount } from '@/lib/inventory';
+import { type DebuffTier, type DebuffType } from '@/lib/debuffs';
 import { useTranslation } from '@/lib/useTranslation';
 import { useEffect, useRef, useState, useMemo, useCallback } from 'react';
 import { Heart, Crosshair, Skull, Swords, Shield, Backpack, Settings, Sword } from 'lucide-react';
@@ -274,6 +275,154 @@ function NotificationsContent({ preview = false }: { preview?: boolean } = {}) {
           {n.text}
         </div>
       ))}
+    </div>
+  );
+}
+
+// ── M2D1 #2 — debuff (curse) icon stack ─────────────────────────────
+/** The debuff stack renders with its own local config instead of joining
+ *  hudConfig.ts's HudElementId list: a new id there would also require
+ *  DEFAULT_HUD_LAYOUT, DRAGGABLE_HUD_ELEMENTS and HudElementContent entries,
+ *  and hudConfig.ts is explicitly out of scope for this session. The declared
+ *  shape matches HudElementConfig (x/y are viewport fractions), so it stays a
+ *  plain HUD element and never appears in the Custom HUD editor. */
+const DEBUFF_ICONS_ELEMENT = {
+  id: 'debuffIcons',
+  visible: true,
+  position: { x: 0.5, y: 0.08 },
+} as const;
+
+/** One-letter badge shown on the icon. */
+const DEBUFF_LETTER: Record<DebuffType, string> = {
+  slowness: 'S',
+  weakness: 'W',
+  fatigue: 'F',
+  poison: 'P',
+  bleeding: 'B',
+  crazy: 'C',
+  intoxicated: 'I',
+};
+
+/** Full type name shown in the expanded list. */
+const DEBUFF_LABEL: Record<DebuffType, string> = {
+  slowness: 'Slowness',
+  weakness: 'Weakness',
+  fatigue: 'Fatigue',
+  poison: 'Poison',
+  bleeding: 'Bleeding',
+  crazy: 'Crazy',
+  intoxicated: 'Intoxicated',
+};
+
+const DEBUFF_TIER_ROMAN: Record<DebuffTier, string> = { 1: 'I', 2: 'II', 3: 'III', 4: 'IV', 5: 'V' };
+
+/** Tier tone: I–II gray, III amber, IV orange, V red. */
+function debuffTierColor(tier: DebuffTier): string {
+  if (tier >= 5) return '#dc2626';
+  if (tier === 4) return '#ea580c';
+  if (tier === 3) return '#f59e0b';
+  return '#9ca3af';
+}
+
+function DebuffIconStackContent() {
+  const debuffs = useGameStore(s => s.player.debuffs);
+  // Popover open state is component-local and transient — never persisted.
+  const [listOpen, setListOpen] = useState(false);
+  const rootRef = useRef<HTMLDivElement | null>(null);
+
+  // Closes on outside click or Escape.
+  useEffect(() => {
+    if (!listOpen) return;
+    const onPointerDown = (e: PointerEvent) => {
+      if (rootRef.current && !rootRef.current.contains(e.target as Node)) setListOpen(false);
+    };
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setListOpen(false);
+    };
+    window.addEventListener('pointerdown', onPointerDown);
+    window.addEventListener('keydown', onKeyDown);
+    return () => {
+      window.removeEventListener('pointerdown', onPointerDown);
+      window.removeEventListener('keydown', onKeyDown);
+    };
+  }, [listOpen]);
+
+  if (debuffs.length === 0) return null;
+
+  // Oldest first (player.debuffs is in application order).
+  const visibleIcons = debuffs.slice(0, 5);
+  const overflowCount = debuffs.length - visibleIcons.length;
+  const { x, y } = DEBUFF_ICONS_ELEMENT.position;
+
+  return (
+    <div
+      ref={rootRef}
+      className="absolute z-40 flex flex-col items-center gap-1"
+      style={{
+        left: `${x * 100}%`,
+        top: `${y * 100}%`,
+        transform: 'translate(-50%, -50%)',
+        pointerEvents: 'none',
+      }}
+    >
+      <div className="flex items-center gap-1">
+        {visibleIcons.map((d) => {
+          const tone = debuffTierColor(d.tier);
+          return (
+            <div
+              key={d.id}
+              title={`${DEBUFF_LABEL[d.type]} ${DEBUFF_TIER_ROMAN[d.tier]}`}
+              className="w-5 h-5 rounded-sm flex items-center justify-center text-[10px] font-bold leading-none"
+              style={{
+                border: `1px solid ${tone}`,
+                color: tone,
+                background: H.colors.notificationBg,
+              }}
+            >
+              {DEBUFF_LETTER[d.type]}
+            </div>
+          );
+        })}
+        {overflowCount > 0 && (
+          <button
+            type="button"
+            aria-label="Show all active curses"
+            onClick={() => setListOpen(open => !open)}
+            className="w-5 h-5 rounded-sm flex items-center justify-center text-[10px] font-bold leading-none"
+            style={{
+              border: '1px solid rgba(255,255,255,0.35)',
+              color: '#e2e8f0',
+              background: H.colors.notificationBg,
+              pointerEvents: 'auto',
+              cursor: 'pointer',
+            }}
+          >
+            +
+          </button>
+        )}
+      </div>
+
+      {listOpen && (
+        <div
+          className="rounded-md flex flex-col text-[10px] font-semibold"
+          style={{
+            background: H.colors.notificationBg,
+            border: `1px solid ${H.colors.notificationBorder}`,
+            color: H.colors.notificationText,
+            minWidth: '140px',
+            pointerEvents: 'auto',
+          }}
+        >
+          {debuffs.map((d) => (
+            <div key={d.id} className="flex items-center justify-between gap-3 px-2 py-1">
+              <span style={{ color: debuffTierColor(d.tier) }}>
+                {DEBUFF_LABEL[d.type]} {DEBUFF_TIER_ROMAN[d.tier]}
+              </span>
+              <span className="tabular-nums opacity-80">{Math.ceil(d.remainingSec)}s</span>
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
@@ -692,6 +841,11 @@ export default function GameHUD() {
           <TopCenterControls />
         </DraggableHudElement>
       )}
+
+      {/* M2D1 #2 — active-debuff icon stack (top-centre, y 0.08). Immutable
+          local config; see DEBUFF_ICONS_ELEMENT for why it is not a
+          hudLayout entry. */}
+      {DEBUFF_ICONS_ELEMENT.visible && <DebuffIconStackContent />}
 
       {mapOpen && <ExpandedMap onClose={() => useGameStore.getState().setMapOpen(false)} />}
     </>

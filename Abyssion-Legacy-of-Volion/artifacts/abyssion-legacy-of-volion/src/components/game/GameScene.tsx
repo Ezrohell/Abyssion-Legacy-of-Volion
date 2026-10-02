@@ -17,13 +17,18 @@ import {
   NoiseEffect,
   ChromaticAberrationEffect,
 } from 'postprocessing';
-import Player, { playerRigidBodyRef } from './Player';
+import Player, { playerRigidBodyRef, HOUSE_POSITION, BED_POSITION } from './Player';
 import { useGameStore } from '@/lib/store';
 import SlimeEnemy from './enemies/SlimeEnemy';
 import WolfEnemy from './enemies/WolfEnemy';
 import BanditEnemy from './enemies/BanditEnemy';
 import MageEnemy from './enemies/MageEnemy';
 import ThornbackEnemy from './enemies/ThornbackEnemy';
+import CrystalMageEnemy from './enemies/CrystalMageEnemy';
+import FireMageEnemy from './enemies/FireMageEnemy';
+import FrostMageEnemy from './enemies/FrostMageEnemy';
+import FangeryEnemy from './enemies/FangeryEnemy';
+import HolyCrystallinizerWizard from './enemies/HolyCrystallinizerWizard';
 import Checkpoint from './Checkpoint';
 import NPC from './NPC';
 import InteractionManager from './InteractionManager';
@@ -33,8 +38,267 @@ import { LANDMARKS } from '@/lib/minimap';
 import EncounterArea from './EncounterArea';
 import EnemyDummy from './EnemyDummy';
 import WorldFX from './WorldFX';
+import { getItem } from '@/lib/items';
 import { useFrame, useThree } from '@react-three/fiber';
 import { useEffect, useLayoutEffect } from 'react';
+
+// ═══════════════════════════════════════════════════════════════════════════
+// M2D4 #1 — VERTICAL SLICE: DUNGEON SHELL
+// Single source of truth for the dungeon. The shell is a distant, plain
+// 10-room + bossroom box at DUNGEON_ORIGIN so it never interferes with the
+// main map. Content (enemies, puzzles, traps, boss) arrives in later phases.
+// ═══════════════════════════════════════════════════════════════════════════
+
+export const DUNGEON_DOOR_WORLD_POSITION: [number, number, number] = [30, 0, 60];
+export const DUNGEON_ORIGIN: [number, number, number] = [500, 0, 0];
+export const DUNGEON_ROOM_COUNT = 10;
+export const DUNGEON_BOSSROOM_INDEX = 10;
+export const DUNGEON_ROOM_SIZE: [number, number] = [12, 12];
+export const DUNGEON_BOSSROOM_SIZE: [number, number] = [20, 20];
+/** Room sequence (magic / puzzle / trap / puzzle_trap). Room 11 = bossroom.
+ *  Infrastructure only this session: every room is a plain box. */
+export const ROOM_SEQUENCE: readonly string[] = [
+  'magic', 'puzzle', 'trap', 'puzzle_trap', 'magic',
+  'trap', 'magic', 'puzzle_trap', 'puzzle', 'magic',
+];
+
+/** Room N's centre x in dungeon local space: (N - 1) * 12 + 6. */
+const DUNGEON_ROOM_CENTER_X = (n: number) =>
+  (n - 1) * DUNGEON_ROOM_SIZE[0] + DUNGEON_ROOM_SIZE[0] / 2;
+/** Bossroom centre x in dungeon local space: 10 * 12 + 12 + 10 = 142. */
+const DUNGEON_BOSSROOM_CENTER_X =
+  DUNGEON_BOSSROOM_INDEX * DUNGEON_ROOM_SIZE[0] + 12 + DUNGEON_BOSSROOM_SIZE[0] / 2;
+
+const DUNGEON_WALL_T = 0.2;
+const DUNGEON_WALL_H = 3;
+const DUNGEON_DOOR_W = 2.4;
+const DUNGEON_PALETTE = { wall: '#a16207', floor: '#8a6b4a', ceiling: '#5a3d22' } as const;
+
+/** Interact labels. Owned by the door zones; Player never invents them. */
+const DUNGEON_PROMPT_ENTER = 'Enter Dungeon';
+const DUNGEON_PROMPT_BOSSROOM = 'Enter Bossroom';
+const DUNGEON_PROMPT_EXIT = 'Leave Dungeon';
+
+/** World-space entry point for room `room` (1..10) or the bossroom (11).
+ *  Room 1's entry is the vestibule in front of its -z door. */
+export function dungeonRoomEntryWorld(room: number): [number, number, number] {
+  const [ox, oy, oz] = DUNGEON_ORIGIN;
+  if (room >= DUNGEON_BOSSROOM_INDEX + 1) return [ox + DUNGEON_BOSSROOM_CENTER_X - 8, oy + 1, oz];
+  if (room <= 1) return [ox + DUNGEON_ROOM_CENTER_X(1), oy + 1, oz - 9];
+  return [ox + DUNGEON_ROOM_CENTER_X(room) - 5, oy + 1, oz];
+}
+
+/** World-space return point beside the world-side door (door + 2 m in +z). */
+export function dungeonExitWorldPosition(): [number, number, number] {
+  return [
+    DUNGEON_DOOR_WORLD_POSITION[0],
+    DUNGEON_DOOR_WORLD_POSITION[1] + 1,
+    DUNGEON_DOOR_WORLD_POSITION[2] + 2,
+  ];
+}
+
+const dungeonBossroomDoorWorld = (): [number, number, number] => [
+  DUNGEON_ORIGIN[0] + DUNGEON_ROOM_CENTER_X(DUNGEON_ROOM_COUNT) + DUNGEON_ROOM_SIZE[0] / 2,
+  DUNGEON_ORIGIN[1],
+  DUNGEON_ORIGIN[2],
+];
+
+const dungeonExitDoorWorld = (): [number, number, number] => [
+  DUNGEON_ORIGIN[0] + DUNGEON_BOSSROOM_CENTER_X,
+  DUNGEON_ORIGIN[1],
+  DUNGEON_ORIGIN[2] + DUNGEON_BOSSROOM_SIZE[1] / 2,
+];
+
+interface DungeonSolid {
+  key: string;
+  pos: [number, number, number];
+  size: [number, number, number];
+  color: string;
+}
+
+/** x-wall at x = cx (perpendicular to x) spanning z ∈ [cz-halfD, cz+halfD]. */
+function dungeonXWall(cx: number, cz: number, halfD: number, gap: boolean, key: string): DungeonSolid[] {
+  if (!gap) return [{ key, pos: [cx, DUNGEON_WALL_H / 2, cz], size: [DUNGEON_WALL_T, DUNGEON_WALL_H, halfD * 2], color: DUNGEON_PALETTE.wall }];
+  const seg = (halfD * 2 - DUNGEON_DOOR_W) / 2;
+  return [
+    { key: `${key}a`, pos: [cx, DUNGEON_WALL_H / 2, cz - DUNGEON_DOOR_W / 2 - seg / 2], size: [DUNGEON_WALL_T, DUNGEON_WALL_H, seg], color: DUNGEON_PALETTE.wall },
+    { key: `${key}b`, pos: [cx, DUNGEON_WALL_H / 2, cz + DUNGEON_DOOR_W / 2 + seg / 2], size: [DUNGEON_WALL_T, DUNGEON_WALL_H, seg], color: DUNGEON_PALETTE.wall },
+  ];
+}
+
+/** z-wall at z = cz spanning x ∈ [cx-halfW, cx+halfW]. */
+function dungeonZWall(cx: number, cz: number, halfW: number, gap: boolean, key: string): DungeonSolid[] {
+  if (!gap) return [{ key, pos: [cx, DUNGEON_WALL_H / 2, cz], size: [halfW * 2, DUNGEON_WALL_H, DUNGEON_WALL_T], color: DUNGEON_PALETTE.wall }];
+  const seg = (halfW * 2 - DUNGEON_DOOR_W) / 2;
+  return [
+    { key: `${key}a`, pos: [cx - DUNGEON_DOOR_W / 2 - seg / 2, DUNGEON_WALL_H / 2, cz], size: [seg, DUNGEON_WALL_H, DUNGEON_WALL_T], color: DUNGEON_PALETTE.wall },
+    { key: `${key}b`, pos: [cx + DUNGEON_DOOR_W / 2 + seg / 2, DUNGEON_WALL_H / 2, cz], size: [seg, DUNGEON_WALL_H, DUNGEON_WALL_T], color: DUNGEON_PALETTE.wall },
+  ];
+}
+
+/** Build every dungeon solid (floor / ceiling / walls) in WORLD space. A shared
+ *  wall between two adjacent rooms is emitted exactly once. */
+function buildDungeonSolids(): DungeonSolid[] {
+  const out: DungeonSolid[] = [];
+  const hw = DUNGEON_ROOM_SIZE[0] / 2;
+  const hd = DUNGEON_ROOM_SIZE[1] / 2;
+  for (let n = 1; n <= DUNGEON_ROOM_COUNT; n++) {
+    const cx = DUNGEON_ROOM_CENTER_X(n);
+    out.push({ key: `r${n}-floor`, pos: [cx, -0.5, 0], size: [DUNGEON_ROOM_SIZE[0], 1, DUNGEON_ROOM_SIZE[1]], color: DUNGEON_PALETTE.floor });
+    out.push({ key: `r${n}-ceiling`, pos: [cx, DUNGEON_WALL_H, 0], size: [DUNGEON_ROOM_SIZE[0], 0.2, DUNGEON_ROOM_SIZE[1]], color: DUNGEON_PALETTE.ceiling });
+    // East (+x): room 10's east wall is solid — its "door" is the bossroom
+    // interact (E → loading → teleport), not a walk-through gap.
+    out.push(...dungeonXWall(cx + hw, 0, hd, n < DUNGEON_ROOM_COUNT, `r${n}-east`));
+    out.push(...dungeonZWall(cx, hd, hw, false, `r${n}-north`));
+    // South (-z): room 1 opens to the entry vestibule.
+    out.push(...dungeonZWall(cx, -hd, hw, n === 1, `r${n}-south`));
+    // West (-x): only room 1 owns its own west wall; the rest reuse the
+    // previous room's east wall (rooms are contiguous along +x).
+    if (n === 1) out.push(...dungeonXWall(cx - hw, 0, hd, false, 'r1-west'));
+  }
+  // Bossroom — 20 × 20, 12 m after room 10. Exit door on the +z wall.
+  const bx = DUNGEON_BOSSROOM_CENTER_X;
+  const bhw = DUNGEON_BOSSROOM_SIZE[0] / 2;
+  const bhd = DUNGEON_BOSSROOM_SIZE[1] / 2;
+  out.push({ key: 'boss-floor', pos: [bx, -0.5, 0], size: [DUNGEON_BOSSROOM_SIZE[0], 1, DUNGEON_BOSSROOM_SIZE[1]], color: DUNGEON_PALETTE.floor });
+  out.push({ key: 'boss-ceiling', pos: [bx, DUNGEON_WALL_H, 0], size: [DUNGEON_BOSSROOM_SIZE[0], 0.2, DUNGEON_BOSSROOM_SIZE[1]], color: DUNGEON_PALETTE.ceiling });
+  out.push(...dungeonXWall(bx - bhw, 0, bhd, false, 'boss-west'));
+  out.push(...dungeonXWall(bx + bhw, 0, bhd, false, 'boss-east'));
+  out.push(...dungeonZWall(bx, -bhd, bhw, false, 'boss-south'));
+  out.push(...dungeonZWall(bx, bhd, bhw, true, 'boss-north'));
+  // Entry vestibule 6 × 6 immediately before room 1. Its +z side is room 1's
+  // south door, so no vestibule wall is drawn there.
+  const vx = DUNGEON_ROOM_CENTER_X(1);
+  const vz = -9;
+  out.push({ key: 'vest-floor', pos: [vx, -0.5, vz], size: [6, 1, 6], color: DUNGEON_PALETTE.floor });
+  out.push({ key: 'vest-ceiling', pos: [vx, DUNGEON_WALL_H, vz], size: [6, 0.2, 6], color: DUNGEON_PALETTE.ceiling });
+  out.push(...dungeonXWall(vx - 3, vz, 3, false, 'vest-west'));
+  out.push(...dungeonXWall(vx + 3, vz, 3, false, 'vest-east'));
+  out.push(...dungeonZWall(vx, vz - 3, 3, false, 'vest-south'));
+  const [ox, oy, oz] = DUNGEON_ORIGIN;
+  return out.map((s) => ({ ...s, pos: [s.pos[0] + ox, s.pos[1] + oy, s.pos[2] + oz] as [number, number, number] }));
+}
+
+/** The dungeon shell: fixed colliders + palette-matched meshes. Every surface
+ *  carries its own <CuboidCollider>; auto-colliders are deliberately disabled. */
+function DungeonShell() {
+  const solids = useMemo(() => buildDungeonSolids(), []);
+  return (
+    <group>
+      <RigidBody type="fixed" colliders={false}>
+        {solids.map((s) => (
+          <CuboidCollider
+            key={`c-${s.key}`}
+            args={[s.size[0] / 2, s.size[1] / 2, s.size[2] / 2]}
+            position={s.pos}
+          />
+        ))}
+      </RigidBody>
+      {solids.map((s) => (
+        <mesh key={`m-${s.key}`} position={s.pos} castShadow receiveShadow>
+          <boxGeometry args={s.size} />
+          <meshToonMaterial color={s.color} />
+        </mesh>
+      ))}
+      {/* Room 10 +x bossroom door (dark slab) and the bossroom +z exit door. */}
+      <mesh position={dungeonBossroomDoorWorld()} castShadow receiveShadow>
+        <boxGeometry args={[0.24, DUNGEON_WALL_H, DUNGEON_DOOR_W]} />
+        <meshToonMaterial color="#4a3220" />
+      </mesh>
+      <mesh position={dungeonExitDoorWorld()} castShadow receiveShadow>
+        <boxGeometry args={[DUNGEON_DOOR_W, DUNGEON_WALL_H, 0.24]} />
+        <meshToonMaterial color="#4a3220" />
+      </mesh>
+    </group>
+  );
+}
+
+/** World-side dungeon door at the map edge (2 m × 3 m dark slab) and a small
+ *  access plinth so the door is reachable through the +z boundary gap. */
+function DungeonWorldDoor() {
+  const [dx, dy, dz] = DUNGEON_DOOR_WORLD_POSITION;
+  return (
+    <group>
+      <RigidBody type="fixed" colliders={false}>
+        <CuboidCollider args={[3, 0.5, 8]} position={[dx, dy - 0.5, dz - 4]} />
+      </RigidBody>
+      <mesh position={[dx, dy - 0.5, dz - 4]} receiveShadow>
+        <boxGeometry args={[6, 1, 16]} />
+        <meshToonMaterial color="#8a6b4a" />
+      </mesh>
+      <mesh position={[dx, dy + 1.5, dz]} castShadow receiveShadow>
+        <boxGeometry args={[2, 3, 0.3]} />
+        <meshToonMaterial color="#4a3220" />
+      </mesh>
+      <mesh position={[dx, dy + 1.5, dz - 0.2]} castShadow>
+        <boxGeometry args={[2.2, 3.2, 0.1]} />
+        <meshToonMaterial color={DUNGEON_PALETTE.wall} />
+      </mesh>
+    </group>
+  );
+}
+
+/** Registers the interact prompt for a dungeon door while the player is within
+ *  `radius` (horizontal). Writes only on change and self-heals if a frame of
+ *  InteractionManager clears it. */
+function DungeonDoorZone({ position, label, radius = 2 }: { position: [number, number, number]; label: string; radius?: number }) {
+  useFrame(() => {
+    const st = useGameStore.getState();
+    const p = st.player.position;
+    const dx = p[0] - position[0];
+    const dz = p[2] - position[2];
+    const inRange = dx * dx + dz * dz <= radius * radius;
+    const cur = st.ui.interactPrompt;
+    if (inRange) {
+      if (cur !== label) {
+        useGameStore.setState((s) => ({ ui: { ...s.ui, interactPrompt: label } }));
+      }
+    } else if (cur === label) {
+      useGameStore.setState((s) => ({ ui: { ...s.ui, interactPrompt: null } }));
+    }
+  });
+  return null;
+}
+
+/** Room-crossing checkpoint. Entering room N (or the bossroom) updates
+ *  dungeonCheckpointRoom + dungeonRoom once per entry (local lastRoom ref,
+ *  reset when the player is between rooms / out of the dungeon). */
+function DungeonRoomTracker() {
+  const lastRoomRef = useRef(0);
+  useFrame(() => {
+    const t = readPlayerBody();
+    if (!t) return;
+    const lx = t.x - DUNGEON_ORIGIN[0];
+    const lz = t.z - DUNGEON_ORIGIN[2];
+    let room = 0;
+    const hw = DUNGEON_ROOM_SIZE[0] / 2;
+    const hd = DUNGEON_ROOM_SIZE[1] / 2;
+    for (let n = 1; n <= DUNGEON_ROOM_COUNT; n++) {
+      if (Math.abs(lx - DUNGEON_ROOM_CENTER_X(n)) <= hw && Math.abs(lz) <= hd) {
+        room = n;
+        break;
+      }
+    }
+    if (room === 0) {
+      const bhw = DUNGEON_BOSSROOM_SIZE[0] / 2;
+      const bhd = DUNGEON_BOSSROOM_SIZE[1] / 2;
+      if (Math.abs(lx - DUNGEON_BOSSROOM_CENTER_X) <= bhw && Math.abs(lz) <= bhd) {
+        room = DUNGEON_BOSSROOM_INDEX + 1;
+      }
+    }
+    if (room === 0) {
+      // Outside every room (or back in the world) — re-arm for the next entry.
+      lastRoomRef.current = 0;
+      return;
+    }
+    if (room === lastRoomRef.current) return;
+    lastRoomRef.current = room;
+    const st = useGameStore.getState();
+    st.setDungeonCheckpoint(room);
+    st.setDungeonRoom(room);
+  });
+  return null;
+}
 
 /** ── Outdoor house (P2.3): four walls + separate sloped roof with overhang,
  *    door opening, two windows, entrance path. Wall and roof are separate
@@ -235,8 +499,190 @@ function ArrowBundlePickup({ position }: { position: [number, number, number] })
         color: '#d6b370',
       });
     }
+  }  );
+  return null;
+}
+
+/** M2D2 #1 — the single edge house: floor, north/east/west walls, a south wall
+ *  with a doorway gap, a ceiling, one bed and a door threshold marker.
+ *  Interior geometry only; minimal materials reuse the village palette. Its
+ *  world position comes from Player.tsx (which owns the bed interaction), so
+ *  the mesh and the sleep trigger can never drift apart. */
+function EdgeHouse() {
+  const wallColor = '#a16207';
+  const half = 3;
+  return (
+    <group position={HOUSE_POSITION}>
+      {/* Floor: collider slab + surface (lifted 1 cm to avoid z-fighting). */}
+      <RigidBody type="fixed" colliders={false}>
+        <CuboidCollider args={[half, 0.5, half]} position={[0, -0.5, 0]} />
+      </RigidBody>
+      <mesh position={[0, 0.01, 0]} rotation={[-Math.PI / 2, 0, 0]} receiveShadow>
+        <planeGeometry args={[half * 2, half * 2]} />
+        <meshToonMaterial color="#8a6b4a" />
+      </mesh>
+      {/* Ceiling (visual only — the player cannot jump out of the room). */}
+      <mesh position={[0, 3, 0]} rotation={[Math.PI / 2, 0, 0]} receiveShadow>
+        <planeGeometry args={[half * 2, half * 2]} />
+        <meshToonMaterial color="#5a3d22" side={THREE.DoubleSide} />
+      </mesh>
+      {/* Solid north / east / west walls (one collider slab per wall). */}
+      <RigidBody type="fixed" colliders={false}>
+        <CuboidCollider args={[half, 1.5, 0.1]} position={[0, 1.5, -half]} />
+        <CuboidCollider args={[0.1, 1.5, half]} position={[-half, 1.5, 0]} />
+        <CuboidCollider args={[0.1, 1.5, half]} position={[half, 1.5, 0]} />
+      </RigidBody>
+      {([
+        [[0, 1.5, -half], [half * 2, 3, 0.2]],
+        [[-half, 1.5, 0], [0.2, 3, half * 2]],
+        [[half, 1.5, 0], [0.2, 3, half * 2]],
+      ] as const).map(([pos, size], i) => (
+        <mesh
+          key={`edge-wall-${i}`}
+          position={pos as unknown as [number, number, number]}
+          castShadow
+          receiveShadow
+        >
+          <boxGeometry args={size as unknown as [number, number, number]} />
+          <meshToonMaterial color={wallColor} />
+        </mesh>
+      ))}
+      {/* South wall split around a 1.4 m doorway gap. */}
+      {([
+        [[-1.85, 1.5, half], [2.3, 3, 0.2]],
+        [[1.85, 1.5, half], [2.3, 3, 0.2]],
+      ] as const).map(([pos, size], i) => (
+        <RigidBody key={`edge-south-wall-${i}`} type="fixed">
+          <mesh
+            position={pos as unknown as [number, number, number]}
+            castShadow
+            receiveShadow
+          >
+            <boxGeometry args={size as unknown as [number, number, number]} />
+            <meshToonMaterial color={wallColor} />
+          </mesh>
+        </RigidBody>
+      ))}
+      {/* Door threshold marker. */}
+      <mesh position={[0, 0.02, half]} rotation={[-Math.PI / 2, 0, 0]}>
+        <planeGeometry args={[1.4, 0.5]} />
+        <meshToonMaterial color="#4a3220" />
+      </mesh>
+      {/* The only furniture: one bed, at the absolute BED_POSITION. */}
+      <group position={[BED_POSITION[0] - HOUSE_POSITION[0], 0, BED_POSITION[2] - HOUSE_POSITION[2]]}>
+        <mesh position={[0, 0.25, 0]} castShadow receiveShadow>
+          <boxGeometry args={[1.1, 0.5, 2]} />
+          <meshToonMaterial color="#5a3d22" />
+        </mesh>
+        <mesh position={[0, 0.58, 0]} castShadow>
+          <boxGeometry args={[1, 0.16, 1.8]} />
+          <meshToonMaterial color="#9ca3af" />
+        </mesh>
+        <mesh position={[0, 0.7, -0.7]} castShadow>
+          <boxGeometry args={[0.7, 0.14, 0.4]} />
+          <meshToonMaterial color="#e5e7eb" />
+        </mesh>
+      </group>
+    </group>
+  );
+}
+
+/** M2D2 #1 — mirrors the house footprint into player.inHouse. No lock, no
+ *  collider change: enemies may enter (R7). Only writes on an edge so it never
+ *  churns subscribers while the player stands still. */
+function HouseOccupancyZone({
+  center,
+  halfX,
+  halfZ,
+}: {
+  center: [number, number, number];
+  halfX: number;
+  halfZ: number;
+}) {
+  const wasInsideRef = useRef(false);
+  useFrame(() => {
+    const t = readPlayerBody();
+    if (!t) return;
+    const inside =
+      Math.abs(t.x - center[0]) <= halfX && Math.abs(t.z - center[2]) <= halfZ;
+    if (inside === wasInsideRef.current) return;
+    wasInsideRef.current = inside;
+    const s = useGameStore.getState();
+    if (inside) s.enterHouse();
+    else s.leaveHouse();
   });
   return null;
+}
+
+/** M2D2 #1 — world-drop meshes. Renders one 0.2 m cube RigidBody per drop that
+ *  is within 30 m of the player AND inside the camera frustum. Rapier owns the
+ *  simulation (gravity, plus the collider mass set from the item's weightGrams);
+ *  the store owns the authoritative list. Drops outside the render window are
+ *  simply not mounted, so a reload re-mounts them lazily when they enter view. */
+function WorldDropMeshes() {
+  const worldDrops = useGameStore((s) => s.player.worldDrops);
+  const { camera } = useThree();
+  // Ids currently in the render window. Held in a ref too so the per-frame
+  // frustum test only calls setState when membership actually changes — no
+  // per-frame re-render, no per-frame allocation (scratch objects are reused).
+  const visibleRef = useRef<string[]>([]);
+  const [visibleIds, setVisibleIds] = useState<string[]>([]);
+  const frustumRef = useRef(new THREE.Frustum());
+  const projScreenRef = useRef(new THREE.Matrix4());
+  const scratchRef = useRef(new THREE.Vector3());
+
+  useFrame(() => {
+    // Read the player position off the store instead of subscribing: it is
+    // rewritten every frame, and a subscription would re-render this component
+    // on every frame.
+    const [px, py, pz] = useGameStore.getState().player.position;
+    camera.updateMatrixWorld();
+    frustumRef.current.setFromProjectionMatrix(
+      projScreenRef.current.multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse),
+    );
+    const frustum = frustumRef.current;
+    const scratch = scratchRef.current;
+    const next: string[] = [];
+    for (const d of worldDrops) {
+      const dx = d.position[0] - px;
+      const dy = d.position[1] - py;
+      const dz = d.position[2] - pz;
+      if (dx * dx + dy * dy + dz * dz > 30 * 30) continue;
+      scratch.set(d.position[0], d.position[1], d.position[2]);
+      if (frustum.containsPoint(scratch)) next.push(d.id);
+    }
+    const prev = visibleRef.current;
+    if (next.length !== prev.length || next.some((id, i) => id !== prev[i])) {
+      visibleRef.current = next;
+      setVisibleIds(next);
+    }
+  });
+
+  if (visibleIds.length === 0) return null;
+  return (
+    <group>
+      {visibleIds.map((id) => {
+        const drop = worldDrops.find((d) => d.id === id);
+        if (!drop) return null;
+        const mass = Math.max(1, getItem(drop.itemId)?.weightGrams ?? 1);
+        return (
+          <RigidBody
+            key={drop.id}
+            colliders={false}
+            position={drop.position}
+            linearDamping={0.2}
+            angularDamping={0.4}
+          >
+            <CuboidCollider args={[0.1, 0.1, 0.1]} mass={mass} />
+            <mesh castShadow>
+              <boxGeometry args={[0.2, 0.2, 0.2]} />
+              <meshToonMaterial color="#d9a441" />
+            </mesh>
+          </RigidBody>
+        );
+      })}
+    </group>
+  );
 }
 
 /** Simple tree component */
@@ -1371,10 +1817,184 @@ function AmbientLife() {
   );
 }
 
+// ══════════════════════════════════════════════════════════════════════════
+// M2D4 #2 — PHASE 2: DUNGEON ENEMY SPAWNING
+// Per-room enemy table (dungeon-LOCAL coordinates; DUNGEON_ORIGIN is added at
+// mount time). Enemies are mounted only for the room the player currently
+// occupies, so a room change despawns them and no live enemy state persists.
+// No auto-advance on clear — the player must walk through the door.
+// ══════════════════════════════════════════════════════════════════════════
+type DungeonEnemyKind = 'arcane' | 'crystal' | 'fire' | 'frost' | 'fangery';
+
+const DUNGEON_ROOM_ENEMIES: Record<number, { kind: DungeonEnemyKind; pos: [number, number, number] }[]> = {
+  1: [{ kind: 'arcane', pos: [6, 0, 0] }],
+  2: [
+    { kind: 'arcane', pos: [18, 0, -3] },
+    { kind: 'arcane', pos: [18, 0, 3] },
+  ],
+  3: [{ kind: 'crystal', pos: [30, 0, 0] }],
+  4: [
+    { kind: 'crystal', pos: [42, 0, -3] },
+    { kind: 'crystal', pos: [42, 0, 3] },
+  ],
+  5: [{ kind: 'fire', pos: [54, 0, 0] }],
+  6: [
+    { kind: 'fire', pos: [66, 0, 0] },
+    { kind: 'fangery', pos: [66, 0, -4] },
+    { kind: 'fangery', pos: [66, 0, 4] },
+  ],
+  7: [{ kind: 'frost', pos: [78, 0, 0] }],
+  8: [
+    { kind: 'frost', pos: [90, 0, 0] },
+    { kind: 'fire', pos: [90, 0, 4] },
+  ],
+  9: [
+    { kind: 'fangery', pos: [102, 0, -3] },
+    { kind: 'fangery', pos: [102, 0, 0] },
+    { kind: 'fangery', pos: [102, 0, 3] },
+  ],
+  10: [
+    { kind: 'crystal', pos: [114, 0, -5] },
+    { kind: 'fire', pos: [114, 0, 5] },
+    { kind: 'frost', pos: [114, 0, 0] },
+    { kind: 'fangery', pos: [114, 0, -2] },
+    { kind: 'fangery', pos: [114, 0, 2] },
+  ],
+};
+
+function DungeonEnemies() {
+  const dungeonRoom = useGameStore((state) => state.player.dungeonRoom);
+  const list = DUNGEON_ROOM_ENEMIES[dungeonRoom];
+  if (dungeonRoom <= 0 || !list) return null;
+  const [ox, oy, oz] = DUNGEON_ORIGIN;
+  return (
+    <>
+      {list.map((e, i) => {
+        const pos: [number, number, number] = [ox + e.pos[0], oy + e.pos[1], oz + e.pos[2]];
+        switch (e.kind) {
+          case 'arcane':
+            return <MageEnemy key={i} position={pos} name="Arcane Mage" />;
+          case 'crystal':
+            return <CrystalMageEnemy key={i} position={pos} />;
+          case 'fire':
+            return <FireMageEnemy key={i} position={pos} />;
+          case 'frost':
+            return <FrostMageEnemy key={i} position={pos} />;
+          case 'fangery':
+            return <FangeryEnemy key={i} position={pos} />;
+          default:
+            return null;
+        }
+      })}
+    </>
+  );
+}
+
+// ══════════════════════════════════════════════════════════════════════════
+// M2D4 #2 — PHASE 5: PUZZLE / TRAP INFRASTRUCTURE (placeholder content)
+// RoomContent dispatches by ROOM_SEQUENCE for the current room; PuzzleZone and
+// TrapZone are the only two content kinds. Puzzle and trap content beyond the
+// interactable cube and the damage plane is UNSPECIFIED and deliberately NOT
+// invented.
+// ══════════════════════════════════════════════════════════════════════════
+const PUZZLE_PROMPT = 'Inspect Rune';
+
+/** The puzzle cube currently within interact range (null when none). Written
+ *  by PuzzleZone each frame; read by GameScene's single E handler so the
+ *  puzzle adds no global listener of its own. */
+const puzzleInteractRef: { current: { room: number } | null } = { current: null };
+
+/** P5-R2 — placeholder puzzle: one 0.5 m cube at the room centre. E within
+ *  1.5 m marks the room cleared; an already-cleared room renders green. */
+function PuzzleZone({ room }: { room: number }) {
+  const cleared = useGameStore((s) => s.player.dungeonRoomCleared.includes(room));
+  const cx = DUNGEON_ORIGIN[0] + DUNGEON_ROOM_CENTER_X(room);
+  const cy = DUNGEON_ORIGIN[1];
+  const cz = DUNGEON_ORIGIN[2];
+
+  useFrame(() => {
+    const t = readPlayerBody();
+    const inRange = t !== null && Math.hypot(t.x - cx, t.z - cz) <= 1.5;
+    const st = useGameStore.getState();
+    if (inRange) {
+      puzzleInteractRef.current = { room };
+      if (st.ui.interactPrompt !== PUZZLE_PROMPT) {
+        useGameStore.setState((s) => ({ ui: { ...s.ui, interactPrompt: PUZZLE_PROMPT } }));
+      }
+    } else {
+      if (puzzleInteractRef.current?.room === room) puzzleInteractRef.current = null;
+      if (st.ui.interactPrompt === PUZZLE_PROMPT) {
+        useGameStore.setState((s) => ({ ui: { ...s.ui, interactPrompt: null } }));
+      }
+    }
+  });
+
+  // Clear the shared interact slot on unmount (room change / dungeon exit).
+  useEffect(() => () => {
+    if (puzzleInteractRef.current?.room === room) puzzleInteractRef.current = null;
+  }, [room]);
+
+  return (
+    <mesh castShadow position={[cx, cy + 1, cz]}>
+      <boxGeometry args={[0.5, 0.5, 0.5]} />
+      <meshToonMaterial
+        color={cleared ? '#22c55e' : '#eab308'}
+        emissive={cleared ? '#16a34a' : '#a16207'}
+        emissiveIntensity={0.6}
+      />
+    </mesh>
+  );
+}
+
+/** P5-R3 — placeholder trap: a 4 × 4 m red plane. Overlap (< 2 m) applies
+ *  Bleeding I with a local 2 s cooldown ref. Nothing else is implemented. */
+function TrapZone({ room }: { room: number }) {
+  const cooldownRef = useRef(0);
+  const cx = DUNGEON_ORIGIN[0] + DUNGEON_ROOM_CENTER_X(room);
+  const cy = DUNGEON_ORIGIN[1];
+  const cz = DUNGEON_ORIGIN[2];
+
+  useFrame((_, delta) => {
+    cooldownRef.current = Math.max(0, cooldownRef.current - delta);
+    if (cooldownRef.current > 0) return;
+    const t = readPlayerBody();
+    if (t && Math.hypot(t.x - cx, t.z - cz) < 2) {
+      useGameStore.getState().applyDebuff('bleeding', 1, 3);
+      cooldownRef.current = 2;
+    }
+  });
+
+  return (
+    <mesh rotation={[-Math.PI / 2, 0, 0]} position={[cx, cy + 0.02, cz]}>
+      <planeGeometry args={[4, 4]} />
+      <meshBasicMaterial color="#ef4444" transparent opacity={0.35} depthWrite={false} />
+    </mesh>
+  );
+}
+
+/** P5-R1/P5-R5 — dispatch content by ROOM_SEQUENCE[dungeonRoom - 1]. Rooms
+ *  1..10 only; the bossroom (11) and the world mount nothing. */
+function RoomContent() {
+  const dungeonRoom = useGameStore((s) => s.player.dungeonRoom);
+  if (dungeonRoom <= 0 || dungeonRoom > DUNGEON_ROOM_COUNT) return null;
+  const kind = ROOM_SEQUENCE[dungeonRoom - 1];
+  if (kind === 'magic') return null;
+  return (
+    <>
+      {(kind === 'puzzle' || kind === 'puzzle_trap') && <PuzzleZone room={dungeonRoom} />}
+      {(kind === 'trap' || kind === 'puzzle_trap') && <TrapZone room={dungeonRoom} />}
+    </>
+  );
+}
+
 export default function GameScene() {
   const worldPaused = useGameStore((state) => state.ui.showSettings || state.ui.showInventory || state.hudEditMode);
   const houseInterior = useGameStore((state) => state.houseInterior);
   const shadowsEnabled = useGameStore((state) => state.settings.shadows);
+  // M2D4 #1 — the dungeon shell mounts only while the player is inside.
+  const dungeonRoom = useGameStore((state) => state.player.dungeonRoom);
+  // M2D4 #2 — the boss mounts in the bossroom only until it has been defeated.
+  const bossDefeated = useGameStore((state) => state.player.bossDefeated);
   // E2: the two existing lights are driven imperatively by the day cycle
   // (position + intensity only); their JSX baseline stays as authored.
   const ambientLightRef = useRef<THREE.AmbientLight>(null);
@@ -1409,6 +2029,78 @@ export default function GameScene() {
       return false;
     }
   });
+  // M2D4 #1 — dungeon transition UI state. `dungeonFade` is a full-screen black
+  // div (outside the Canvas); `dungeonLoading` is the separate bossroom
+  // loading overlay. Both reset on unmount.
+  const [dungeonFade, setDungeonFade] = useState(0);
+  const [dungeonLoading, setDungeonLoading] = useState(false);
+  const dungeonTimersRef = useRef<ReturnType<typeof setTimeout>[]>([]);
+
+  // M2D4 #1 — E routing for the three dungeon doors. UI.tsx's E handler only
+  // dispatches NPC / checkpoint interactions, so the dungeon doors are handled
+  // here, where the fade / loading state lives. Fade: 0.5 s to black → action
+  // at full black → 0.2 s hold → 2.3 s clear (3 s total).
+  useEffect(() => {
+    const timers = dungeonTimersRef.current;
+    const later = (fn: () => void, ms: number) => timers.push(setTimeout(fn, ms));
+
+    const runFade = (apply: () => void, teleportTo: [number, number, number]) => {
+      useGameStore.getState().setDungeonEntering(true);
+      setDungeonFade(1);
+      later(() => {
+        apply();
+        teleportPlayerBody(teleportTo);
+      }, 500);
+      later(() => setDungeonFade(0), 700);
+      later(() => useGameStore.getState().setDungeonEntering(false), 3000);
+    };
+
+    const runBossroomLoading = () => {
+      useGameStore.getState().setDungeonEntering(true);
+      setDungeonLoading(true);
+      later(() => {
+        const st = useGameStore.getState();
+        st.setDungeonRoom(DUNGEON_BOSSROOM_INDEX + 1);
+        st.setDungeonCheckpoint(DUNGEON_BOSSROOM_INDEX + 1);
+        teleportPlayerBody(dungeonRoomEntryWorld(DUNGEON_BOSSROOM_INDEX + 1));
+        setDungeonLoading(false);
+        st.setDungeonEntering(false);
+      }, 5000);
+    };
+
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.repeat || (e.key !== 'e' && e.key !== 'E')) return;
+      const st = useGameStore.getState();
+      if (st.gamePhase !== 'playing') return;
+      if (
+        st.activeDialogue || st.ui.showSettings || st.ui.showInventory ||
+        st.ui.showQuestLog || st.ui.mapOpen || st.hudEditMode || st.ui.deathOverlay
+      ) return;
+      // M2D4 #2 — the puzzle cube (Phase 5) takes E when it is in range; it
+      // publishes its room through puzzleInteractRef, not the prompt channel.
+      const puzzle = puzzleInteractRef.current;
+      if (puzzle) {
+        useGameStore.getState().markDungeonRoomCleared(puzzle.room);
+        return;
+      }
+      const prompt = st.ui.interactPrompt;
+      if (prompt === DUNGEON_PROMPT_ENTER) {
+        runFade(() => useGameStore.getState().enterDungeon(), dungeonRoomEntryWorld(1));
+      } else if (prompt === DUNGEON_PROMPT_BOSSROOM) {
+        runBossroomLoading();
+      } else if (prompt === DUNGEON_PROMPT_EXIT) {
+        runFade(() => useGameStore.getState().exitDungeon(), dungeonExitWorldPosition());
+      }
+    };
+
+    window.addEventListener('keydown', onKeyDown);
+    return () => {
+      window.removeEventListener('keydown', onKeyDown);
+      for (const t of timers) clearTimeout(t);
+      timers.length = 0;
+    };
+  }, []);
+
   const keyboardMap = useMemo(() => [
     { name: 'forward', keys: ['ArrowUp', 'KeyW'] },
     { name: 'backward', keys: ['ArrowDown', 'KeyS'] },
@@ -1486,6 +2178,9 @@ export default function GameScene() {
                   caller of collectLootDrop. Inside <Physics> because LootDrops
                   emits a sensor RigidBody. */}
               <WorldFX />
+
+              {/* M2D2 #1 — discarded / overflow items as gravity-bound boxes. */}
+              <WorldDropMeshes />
 
               {/* ═══════════════════════════════════════════════════════
                   CHECKPOINTS — Spawn 1: Village center, Spawn 2: Wilderness entrance
@@ -1588,6 +2283,35 @@ export default function GameScene() {
               <VillageHouse position={[4, 0, 4]} wallColor="#b45309" />
               <VillageHouse position={[-5, 0, 5]} wallColor="#a16207" scale={0.9} />
               <VillageHouse position={[2, 0, -3]} wallColor="#92400e" scale={0.8} />
+
+              {/* M2D2 #1 — the single edge house: an enterable shell with one
+                  bed and a door threshold; no lock, no aggro change. */}
+              <EdgeHouse />
+              <HouseOccupancyZone center={HOUSE_POSITION} halfX={3} halfZ={3} />
+
+              {/* M2D4 #1 — the world-side dungeon door + the shell (mounted only
+                  while the player is inside it) + per-room checkpoint tracking. */}
+              <DungeonWorldDoor />
+              <DungeonDoorZone position={DUNGEON_DOOR_WORLD_POSITION} label={DUNGEON_PROMPT_ENTER} />
+              {dungeonRoom > 0 && <DungeonShell />}
+              <DungeonRoomTracker />
+              {dungeonRoom === DUNGEON_ROOM_COUNT && (
+                <DungeonDoorZone position={dungeonBossroomDoorWorld()} label={DUNGEON_PROMPT_BOSSROOM} />
+              )}
+              {dungeonRoom === DUNGEON_BOSSROOM_INDEX + 1 && (
+                <DungeonDoorZone position={dungeonExitDoorWorld()} label={DUNGEON_PROMPT_EXIT} />
+              )}
+              {/* M2D4 #2 — dungeon enemies for the current room only. */}
+              <DungeonEnemies />
+              {/* M2D4 #2 — PHASE 5 puzzle / trap infrastructure (current room). */}
+              <RoomContent />
+              {/* M2D4 #2 — PHASE 3 boss: bossroom centre (dungeon-local x=142),
+                  mounted while the bossroom is current and the boss is alive. */}
+              {dungeonRoom === DUNGEON_BOSSROOM_INDEX + 1 && !bossDefeated && (
+                <HolyCrystallinizerWizard
+                  position={[DUNGEON_ORIGIN[0] + DUNGEON_BOSSROOM_CENTER_X, DUNGEON_ORIGIN[1], DUNGEON_ORIGIN[2]]}
+                />
+              )}
 
               {/* Campfire near Arthur */}
               <RigidBody type="fixed" position={[1.5, 0, 2]}>
@@ -1781,9 +2505,17 @@ export default function GameScene() {
                   <meshToonMaterial color="#1e293b" />
                 </mesh>
               </RigidBody>
-              <RigidBody type="fixed" position={[0, 0, 50]}>
+              {/* M2D4 #1 — the +z boundary is split around the gap that leads
+                  to the world-side dungeon door at [30, 0, 60]. */}
+              <RigidBody type="fixed" position={[-11.5, 0, 50]}>
                 <mesh receiveShadow>
-                  <boxGeometry args={[100, 10, 1]} />
+                  <boxGeometry args={[77, 10, 1]} />
+                  <meshToonMaterial color="#1e293b" />
+                </mesh>
+              </RigidBody>
+              <RigidBody type="fixed" position={[41.5, 0, 50]}>
+                <mesh receiveShadow>
+                  <boxGeometry args={[17, 10, 1]} />
                   <meshToonMaterial color="#1e293b" />
                 </mesh>
               </RigidBody>
@@ -1926,6 +2658,20 @@ export default function GameScene() {
           <PostProcessing />
         </Canvas>
       </KeyboardControls>
+      )}
+      {/* M2D4 #1 — dungeon fade (0 → 1 → 0 over 3 s). Separate element from the
+          bossroom loading overlay below; both sit outside the Canvas. */}
+      <div
+        className="fixed inset-0 z-[120] pointer-events-none bg-black"
+        style={{ opacity: dungeonFade, transition: `opacity ${dungeonFade > 0 ? 0.5 : 2.3}s linear` }}
+        aria-hidden="true"
+      />
+      {/* M2D4 #1 — bossroom loading overlay (placeholder 5 s). */}
+      {dungeonLoading && (
+        <div className="fixed inset-0 z-[130] flex flex-col items-center justify-center bg-black/90 text-white">
+          <div className="h-10 w-10 animate-spin rounded-full border-2 border-white/30 border-t-white" />
+          <p className="mt-4 text-sm uppercase tracking-widest">Loading…</p>
+        </div>
       )}
     </div>
   );

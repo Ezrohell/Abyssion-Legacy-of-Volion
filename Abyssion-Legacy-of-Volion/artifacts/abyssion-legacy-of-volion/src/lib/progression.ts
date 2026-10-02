@@ -176,21 +176,41 @@ export function statBonusMultiplier(masteryLevel: number): number {
 }
 
 /** Which skill slots a weapon category owns. */
-export const WEAPON_SKILL_SLOTS: Record<WeaponCategory, readonly SkillSlot[]> = {
+export const WEAPON_SKILL_SLOTS: Record<string, readonly SkillSlot[]> = {
   core: ['Z', 'F', 'X', 'C', 'V'],
   sword: ['Z', 'X'],
   dagger: ['Z', 'X'],
   gun: ['Z', 'X'],
   staff: ['Z', 'X', 'C'],
+  // M2D4 #2 — the All For Staff owns five slots. This is a per-WEAPON override
+  // keyed by item id; skillSlotsForWeapon resolves the item id before falling
+  // back to its category default.
+  all_for_staff: ['Z', 'F', 'X', 'C', 'V'],
 };
 
-/** Per-weapon mastery level required for a slot. Deliberately EMPTY: an absent
- *  entry means "unlocked at any mastery level". Nothing here invents
- *  thresholds — the operator fills this table. */
-export const WEAPON_SKILL_UNLOCK_LEVELS: Record<string, Partial<Record<SkillSlot, number>>> = {};
+/** Per-weapon mastery level a slot unlocks at. Gates skill use and the HUD
+ *  Locked <N> overlay; a weapon id absent from the table is fully unlocked. */
+export const WEAPON_SKILL_UNLOCK_LEVELS: Record<
+  string,
+  Partial<Record<SkillSlot, number>>
+> = {
+  iron_sword:     { Z: 1, X: 3 },
+  dual_dagger:    { Z: 1, X: 5 },
+  wooden_sword:   { Z: 1, X: 3 },
+  water_staff:    { Z: 1, X: 3, C: 10 },
+  resonance_core: { Z: 1, F: 10, X: 25, C: 50, V: 75 },
+  m1887:          { Z: 1, X: 2 },
+  crossbow:       { Z: 1, X: 2 },
+  all_for_staff:  { Z: 5, X: 15, C: 30, V: 75, F: 0 },
+};
 
 /** Skill slots owned by a weapon id ([] when the id is not a weapon/Core). */
 export function skillSlotsForWeapon(itemId: string): readonly SkillSlot[] {
+  // M2D4 #2 — a per-weapon override (keyed by item id) wins over the category
+  // default, so a weapon can own more slots than its category. Only
+  // all_for_staff uses this today.
+  const direct = WEAPON_SKILL_SLOTS[itemId];
+  if (direct) return direct;
   const cat = weaponCategoryOf(itemId);
   if (!cat) return [];
   return WEAPON_SKILL_SLOTS[cat] ?? [];
@@ -198,7 +218,7 @@ export function skillSlotsForWeapon(itemId: string): readonly SkillSlot[] {
 
 /** Is `slot` unlocked for `itemId` at `masteryLevel`? Fails closed for a slot
  *  the weapon does not own; otherwise unlocked unless a per-weapon threshold
- *  exists in WEAPON_SKILL_UNLOCK_LEVELS (empty at HEAD). */
+ *  exists in WEAPON_SKILL_UNLOCK_LEVELS (see WEAPON_SKILL_UNLOCK_LEVELS above). */
 export function isSkillUnlockedForWeapon(
   itemId: string,
   slot: SkillSlot,

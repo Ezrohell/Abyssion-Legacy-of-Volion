@@ -5,6 +5,7 @@ import * as THREE from 'three';
 import BaseEnemy, { EnemyContext } from './BaseEnemy';
 import { EnemyConfig, EnemyProps, requestAttackerToken, releaseAttackerToken, hasAttackerToken } from './types';
 import { useGameStore } from '@/lib/store';
+import { rollEnemyDebuff } from '@/lib/debuffs';
 import { playerRigidBodyRef } from '../Player';
 import { guardedPlayerImpulse } from '@/lib/playerImpulse';
 
@@ -140,6 +141,17 @@ export default function BanditEnemy({ position, name, arenaBounds }: EnemyProps)
 
         if (distToPlayer <= config.attackRange) {
           const hitTaken = useGameStore.getState().damagePlayer(config.damage);
+          // M2D1 #2 — a landed combo hit may apply this enemy's curse.
+          if (hitTaken) {
+            const debuffRoll = rollEnemyDebuff(config.name, Math.random);
+            if (debuffRoll) {
+              useGameStore.getState().applyDebuff(
+                debuffRoll.type,
+                debuffRoll.tier,
+                debuffRoll.durationSec
+              );
+            }
+          }
           if (hitTaken && playerRigidBodyRef.current) {
             const kbDir = _kbDir.current.copy(playerPos).sub(currPos).normalize();
             guardedPlayerImpulse({ x: kbDir.x * 4, y: 2, z: kbDir.z * 4 });
@@ -158,6 +170,17 @@ export default function BanditEnemy({ position, name, arenaBounds }: EnemyProps)
 
         if (distToPlayer <= config.attackRange) {
           const hitTaken = useGameStore.getState().damagePlayer(config.damage + 8); // Extra damage on combo finish!
+          // M2D1 #2 — a landed combo finisher may apply this enemy's curse.
+          if (hitTaken) {
+            const debuffRoll = rollEnemyDebuff(config.name, Math.random);
+            if (debuffRoll) {
+              useGameStore.getState().applyDebuff(
+                debuffRoll.type,
+                debuffRoll.tier,
+                debuffRoll.durationSec
+              );
+            }
+          }
           if (hitTaken && playerRigidBodyRef.current) {
             const kbDir = _kbDir.current.copy(playerPos).sub(currPos).normalize();
             guardedPlayerImpulse({ x: kbDir.x * 7, y: 3, z: kbDir.z * 7 });

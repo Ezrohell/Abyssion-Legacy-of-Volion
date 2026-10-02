@@ -44,3 +44,34 @@ export function subscribeToasts(
     listeners.delete(fn);
   };
 }
+
+// M2D2 #1 — fixed-format event notifiers. Pure wrappers over pushToast: no
+// state, no dedupe, no rate limiting. Two identical events produce two toasts,
+// exactly like any other pushToast caller.
+
+export function notifyMasteryLevelUp(
+  itemName: string,
+  oldLevel: number,
+  newLevel: number
+): void {
+  pushToast(
+    `Mastery — ${itemName}: Lv ${oldLevel} → ${newLevel}`,
+    'info'
+  );
+}
+
+export function notifyItemDiscarded(
+  itemName: string,
+  count: number
+): void {
+  pushToast(
+    count > 1
+      ? `Discarded ${count}× ${itemName}`
+      : `Discarded ${itemName}`,
+    'info'
+  );
+}
+
+export function notifyCureUsed(itemName: string): void {
+  pushToast(`${itemName} — curses reduced`, 'info');
+}

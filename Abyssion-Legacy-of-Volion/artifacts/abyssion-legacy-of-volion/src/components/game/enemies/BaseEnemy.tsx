@@ -6,6 +6,7 @@ import { RigidBody, RapierRigidBody } from '@react-three/rapier';
 import { Html } from '@react-three/drei';
 import * as THREE from 'three';
 import { useGameStore, registerEnemyTarget, unregisterEnemyTarget, enemyTargets } from '@/lib/store';
+import { rollEnemyDebuff } from '@/lib/debuffs';
 import { EnemyConfig, EnemyState, EnemyFaction, FACTION_HOSTILITY, requestAttackerToken, releaseAttackerToken, hasAttackerToken, tickEnemyStatuses, isStunned, clearEnemyStatuses, getEnemyStatus } from './types';
 import { playerRigidBodyRef } from '../Player';
 import { guardedPlayerImpulse } from '@/lib/playerImpulse';
@@ -565,6 +566,17 @@ export default function BaseEnemy({ position, config, customUpdate, renderMesh }
             // Deal standard melee damage if player in range
             if (distToPlayer <= config.attackRange + 0.5) {
               const hitTaken = useGameStore.getState().damagePlayer(scaledConfig.damage);
+              // M2D1 #2 — a landed melee hit may apply this enemy's curse.
+              if (hitTaken) {
+                const debuffRoll = rollEnemyDebuff(config.name, Math.random);
+                if (debuffRoll) {
+                  useGameStore.getState().applyDebuff(
+                    debuffRoll.type,
+                    debuffRoll.tier,
+                    debuffRoll.durationSec
+                  );
+                }
+              }
               if (hitTaken && config.knockback > 0 && playerRigidBodyRef.current) {
                 _dir.copy(playerPos).sub(pos).normalize();
                 guardedPlayerImpulse({ x: _dir.x * config.knockback, y: 3, z: _dir.z * config.knockback});

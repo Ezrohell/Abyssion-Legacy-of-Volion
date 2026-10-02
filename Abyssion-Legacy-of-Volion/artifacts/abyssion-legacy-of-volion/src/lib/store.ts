@@ -2,13 +2,17 @@ import { create } from 'zustand';
 import * as THREE from 'three';
 import { Quest, Objective, INITIAL_QUESTS, NPCS_DATA, NpcType, DialogueChoice } from './questData';
 import { t, Lang } from './translations';
-import { InventoryState, createInventory, addItem, removeItem, getItemCount, getItemCountByName, getOccupiedSlots, getActiveCategories } from './inventory';
+import { InventoryState, createInventory, addItem, removeItem, getItemCount, getItemCountByName, getOccupiedSlots, getActiveCategories, type InventorySlot } from './inventory';
 import { Archetype, canUseWeapon } from './archetype';
 import { getItem, getItemIdByName, armourSlotOf, type ArmourSlot } from './items';
 import { COMBAT_CONFIG } from './combatConfig';
 import { HudLayout, HudElementId, HudElementConfig, DEFAULT_HUD_LAYOUT, migrateHudLayout, SkillHudConfig, SkillHudEntry } from './hudConfig';
-import { ItemProgression, PlayerStats, createItemProgression, createPlayerStats, grantItemExp, isSkillUnlocked } from './progression';
+import { ItemProgression, PlayerStats, createItemProgression, createPlayerStats, grantItemExp, isSkillUnlocked, masteryLevelFor } from './progression';
 import { masteryPointsForEvent } from './progression';
+import { CURE_ITEMS, type DebuffInstance, type DebuffTier, type DebuffType } from './debuffs';
+import { notifyCureUsed, notifyMasteryLevelUp } from './toast';
+import { CYBERWARE_SLOTS, type CyberwareSlotId } from './cyberware';
+import { dungeonRoomEntryWorld, dungeonExitWorldPosition } from '@/components/game/GameScene';
 
 /** Each weapon/Core id owns independent EXP/level. Authoritative for skill
  *  unlocks; persisted with the save slot. Absent id ⇒ fresh progression. */
@@ -63,6 +67,30 @@ export interface LootItem {
   color: string;
 }
 
+/** M2D2 #1 — a discarded / overflow item lying in the world as a Rapier body.
+ *  `position` is only the spawn point: once mounted, Rapier owns the body.
+ *  Persisted so a reload restores the list; meshes are re-mounted lazily by
+ *  the frustum test in GameScene's WorldDropMeshes. */
+export interface WorldDrop {
+  id: string;
+  itemId: string;
+  count: number;
+  position: [number, number, number];
+  /** Date.now() at spawn — drives the 60-minute expiry (tickWorldDrops). */
+  droppedAt: number;
+  droppedBy: 'player' | 'enemy';
+}
+
+/** M2D2 #1 — how long a world drop survives in real time (60 minutes). */
+const WORLD_DROP_TTL_MS = 60 * 60 * 1000;
+
+/** M2D2 #1 — the world position most recently published by addLootDrop. An
+ *  enemy's death effect publishes its loot immediately before calling
+ *  onEnemyKilled, so this is the dying enemy's last known position for the
+ *  overflow-drop path (onEnemyKilled has no position parameter and the enemy
+ *  components are out of scope). Transient; never persisted, not reactive. */
+const lastPublishedLootPosition: { pos: [number, number, number] | null } = { pos: null };
+
 export interface DamageNumber {
   id: string;
   x: number;
@@ -101,6 +129,63 @@ export interface Notification {
   text: string;
   createdAt: number;
 }
+
+/** M2D2 #1 — jewelry equipment slots. Three independent equipped arrays (see
+ *  player.equippedRings / equippedNecklaces / equippedBracelets); the arrays
+ *  stay sparse and every reader pads them to the counts below. */
+export type JewelrySlot = 'ring' | 'necklace' | 'bracelet';
+
+/** M2D2 #1 — authoritative equipped-slot count per jewelry type, and the store
+ *  field each maps to. 10 + 2 + 5 = the 17 Special Slot Area slots. */
+export const JEWELRY_SLOT_COUNTS: Record<JewelrySlot, number> = {
+  ring: 10,
+  necklace: 2,
+  bracelet: 5,
+};
+
+const JEWELRY_SLOT_KEYS: Record<
+  JewelrySlot,
+  'equippedRings' | 'equippedNecklaces' | 'equippedBracelets'
+> = {
+  ring: 'equippedRings',
+  necklace: 'equippedNecklaces',
+  bracelet: 'equippedBracelets',
+};
+
+/** M2D2 #1 — one implant occupying a slot (or one L/R sub-slot of a paired
+ *  slot). `tier` is placeholder-only this session: installCyberware always
+ *  writes 1 and nothing reads it for stats. `broken` is the damage state. */
+export type CyberwareSlotState = {
+  installed: string | null;
+  tier: 1 | 2 | 3 | 4 | 5;
+  broken: boolean;
+};
+
+/** M2D2 #1 — per-player install map. A single slot stores one
+ *  CyberwareSlotState; a paired slot stores { L, R }. Sparse: an absent key
+ *  reads as nothing installed. Persisted; reset on New Game. */
+export type CyberwareState = Partial<
+  Record<
+    CyberwareSlotId,
+    CyberwareSlotState | { L: CyberwareSlotState; R: CyberwareSlotState }
+  >
+>;
+
+/** Paired slot ids, derived from CYBERWARE_SLOTS (read-only lookup). */
+const CYBERWARE_PAIRED_SLOT_IDS = new Set(
+  CYBERWARE_SLOTS.filter((slot) => slot.paired).map((slot) => slot.id),
+);
+
+/** A fresh, empty single-slot install state (tier floor 1, not broken). */
+const emptyCyberwareSlotState = (): CyberwareSlotState => ({
+  installed: null,
+  tier: 1,
+  broken: false,
+});
+
+/** M2D2 #1 — documented exchange rate between Coin and Bytegold. There is no
+ *  exchange action this session; Bytegold only moves through addBytegold. */
+export const COIN_PER_BYTEGOLD = 1_000_000;
 
 interface GameState {
   player: {
@@ -141,6 +226,59 @@ interface GameState {
      *  derived from EXP via masteryLevelFor — never stored. Persisted; reset
      *  on New Game. */
     mastery: Record<string, number>;
+    /** M2D1 #2 — active curses. Authoritative list; the combined effect is
+     *  DERIVED per frame via aggregateMagnitudes (lib/debuffs) and never
+     *  stored. Persisted; reset on New Game, cleared on death. */
+    debuffs: DebuffInstance[];
+    /** M2D1 #2 — equipped backpack tier. The backpack is non-item state that is
+     *  always equipped and cannot be removed; the tier selects the panel grid
+     *  (see BACKPACK_TIER_GRID). Persisted; reset on New Game. */
+    backpackTier: 1 | 2 | 3 | 4 | 5;
+    /** M2D1 #2 — backpack contents. Sparse: the panel pads to cols*rows from
+     *  the tier grid. Persisted; reset on New Game. */
+    backpackItems: (InventorySlot | null)[];
+    /** M2D2 #1 — equipped jewelry. Sparse, same contract as backpackItems:
+     *  readers pad to JEWELRY_SLOT_COUNTS. `player.inventory` stays the
+     *  authoritative owner of the unequipped pile. Persisted; reset on New
+     *  Game. */
+    equippedRings: (InventorySlot | null)[];
+    equippedNecklaces: (InventorySlot | null)[];
+    equippedBracelets: (InventorySlot | null)[];
+    /** M2D2 #1 — cyberware install map. Sparse: an absent key reads as
+     *  nothing installed. Placeholder only this session (no stat effect).
+     *  Persisted; reset on New Game. */
+    cyberware: CyberwareState;
+    /** M2D2 #1 — Bytegold balance (see COIN_PER_BYTEGOLD). Persisted; reset
+     *  on New Game. */
+    bytegold: number;
+    /** M2D2 #1 — Bytechip arm implants, one flag per arm. Separate from
+     *  cyberware. Persisted; reset on New Game. */
+    hasBytechip: { L: boolean; R: boolean };
+    /** M2D2 #1 — items dropped in the world (discard / enemy overflow). Each
+     *  entry is a Rapier rigid body rendered by GameScene's WorldDropMeshes;
+     *  Rapier owns the simulation, this list is the authoritative source.
+     *  Persisted; reset on New Game; expires after 60 minutes. */
+    worldDrops: WorldDrop[];
+    /** M2D2 #1 — whether the player is inside the edge house (door-threshold
+     *  state only; no lock, enemies may enter). Persisted; reset on New Game. */
+    inHouse: boolean;
+    /** M2D4 #1 — which dungeon room the player is in: 0 = main world, 1..10 =
+     *  room, 11 = bossroom. Persisted; reset on New Game. */
+    dungeonRoom: number;
+    /** M2D4 #1 — last dungeon checkpoint room (0..11). Persisted; reset on New
+     *  Game. Drives the in-dungeon respawn location. */
+    dungeonCheckpointRoom: number;
+    /** M2D4 #1 — true while a dungeon fade / bossroom loading transition is in
+     *  progress (inputs are ignored). Persisted for save-during-fade safety;
+     *  reset on New Game. */
+    dungeonEntering: boolean;
+    /** M2D4 #1 — dungeon rooms whose puzzle/trap state has been solved
+     *  (room indices). Infrastructure only this session. Persisted; reset on
+     *  New Game. */
+    dungeonRoomCleared: number[];
+    /** M2D4 #2 — true once the dungeon boss (Holy Crystallinizer Wizard) has
+     *  been defeated. Persisted; reset on New Game. */
+    bossDefeated: boolean;
     /** Four-piece armour system: independent per-slot equipped items.
      *  `equippedArmour` remains the aggregate damage-reduction reference for
      *  legacy code (first occupied slot) during migration. */
@@ -391,6 +529,85 @@ interface GameState {
   /** M2D1 #1 — add mastery EXP to one item. Level is recomputed on read;
    *  never triggers a save, never clamps. */
   addMasteryExp: (itemId: string, amount: number) => void;
+  /** M2D1 #2 — apply a curse for `durationSec`. The duration is always
+   *  caller-supplied; the instance id is unique per application. `source`
+   *  defaults to 'enemy', so every existing enemy call site is unaffected; an
+   *  'item' curse is suppressed while a backpack is equipped (see A-R8). */
+  applyDebuff: (type: DebuffType, tier: DebuffTier, durationSec: number, source?: 'enemy' | 'item') => void;
+  /** M2D1 #2 — drop one active curse by instance id. */
+  removeDebuff: (id: string) => void;
+  /** M2D1 #2 — advance every active curse by deltaSec, expiring at 0. */
+  tickDebuffs: (deltaSec: number) => void;
+  /** M2D1 #2 — shorten every active curse by `fraction` of its remaining
+   *  time (see CURE_ITEMS); curses driven to 0 are removed. */
+  cureDebuffs: (fraction: number) => void;
+  /** M2D1 #2 — drop every active curse (death / New Game). */
+  clearDebuffs: () => void;
+  /** M2D1 #2 — set the equipped backpack tier. Does NOT touch backpackItems:
+   *  the UI pads/truncates on read. No cost, no upgrade mechanic. */
+  setBackpackTier: (tier: 1 | 2 | 3 | 4 | 5) => void;
+  /** M2D1 #2 — write the backpack contents as-is. */
+  setBackpackItems: (items: (InventorySlot | null)[]) => void;
+  /** M2D2 #1 — equip one jewelry piece into the first free slot of its type.
+   *  Consumes ONE from player.inventory through the existing removeItem path;
+   *  returns false when every slot of that type is full or the item is absent. */
+  equipJewelry: (slot: JewelrySlot, itemId: string) => boolean;
+  /** M2D2 #1 — move one equipped jewelry piece back into player.inventory
+   *  (addItem) and clear its slot. A no-op for an empty/invalid index. */
+  unequipJewelry: (slot: JewelrySlot, index: number) => void;
+  /** M2D2 #1 — DERIVED jewelry bonuses; never stored. Sums
+   *  metadata.jewelryValue per effect and returns the four gameplay
+   *  multipliers (1 = neutral). A metadata.jewelryEffect that does not match
+   *  its own slot is ignored (defensive; no player-visible case today). */
+  getJewelryBonuses: () => {
+    damageMult: number;
+    attackSpeedMult: number;
+    rateOfFireMult: number;
+    maxHealthMult: number;
+  };
+  /** M2D2 #1 — placeholder install. Writes `itemId` into `slotId` at tier 1
+   *  with broken=false; no stat effect and no cost. Paired slots take an L/R
+   *  `side` (defaults to 'L'). Returns false when the target is occupied. */
+  installCyberware: (slotId: CyberwareSlotId, itemId: string, side?: 'L' | 'R') => boolean;
+  /** M2D2 #1 — clear an installed slot (or one L/R side of a paired slot). */
+  uninstallCyberware: (slotId: CyberwareSlotId, side?: 'L' | 'R') => void;
+  /** M2D2 #1 — set the damage/break flag on an installed slot (or one side). */
+  setCyberwareBroken: (slotId: CyberwareSlotId, broken: boolean, side?: 'L' | 'R') => void;
+  /** M2D2 #1 — add to the Bytegold balance. Clamped at 0. */
+  addBytegold: (amount: number) => void;
+  /** M2D2 #1 — set one arm's Bytechip ownership. */
+  setBytechip: (side: 'L' | 'R', has: boolean) => void;
+  /** M2D2 #1 — add a world drop and return its new id. `position` is the
+   *  spawn point only; Rapier simulates the body from there. */
+  spawnWorldDrop: (
+    itemId: string,
+    count: number,
+    position: [number, number, number],
+    droppedBy: 'player' | 'enemy',
+  ) => string;
+  /** M2D2 #1 — remove one world drop by id (pickup / explicit cleanup). */
+  removeWorldDrop: (id: string) => void;
+  /** M2D2 #1 — drop every world drop older than 60 minutes (`now` = Date.now). */
+  tickWorldDrops: (now: number) => void;
+  /** M2D2 #1 — the player stepped into the edge house (door threshold). */
+  enterHouse: () => void;
+  /** M2D2 #1 — the player left the edge house. */
+  leaveHouse: () => void;
+  /** M2D4 #1 — enter the dungeon at room 1 (writes the entry position and arms
+   *  the entry fade flag; the fade itself is a GameScene UI concern). */
+  enterDungeon: () => void;
+  /** M2D4 #1 — leave the dungeon, returning beside the world-side door. */
+  exitDungeon: () => void;
+  /** M2D4 #1 — write dungeonCheckpointRoom only (0..11). */
+  setDungeonCheckpoint: (room: number) => void;
+  /** M2D4 #1 — write dungeonRoom only (0..11). */
+  setDungeonRoom: (room: number) => void;
+  /** M2D4 #1 — write dungeonEntering only. */
+  setDungeonEntering: (active: boolean) => void;
+  /** M2D4 #1 — mark a room's puzzle/trap state solved (push if absent). */
+  markDungeonRoomCleared: (room: number) => void;
+  /** M2D4 #2 — mark the dungeon boss defeated (idempotent). */
+  defeatBoss: () => void;
   getItemLevel: (itemId: string) => number;
   isItemSkillUnlocked: (itemId: string, skillIndex: number) => boolean;
   /** Transient skill HUD state (cooldowns/fired flash). */
@@ -456,6 +673,42 @@ interface PersistedSaveData {
      *  0 / {}. SAVE_SCHEMA_VERSION is deliberately NOT bumped. */
     totalKills?: number;
     mastery?: Record<string, number>;
+    /** M2D1 #2 — active curses (additive field). A save written before this
+     *  field existed has it absent, which reads as []. SAVE_SCHEMA_VERSION is
+     *  deliberately NOT bumped. */
+    debuffs: DebuffInstance[];
+    /** M2D1 #2 — equipped backpack tier (additive field). Absent reads as 1.
+     *  SAVE_SCHEMA_VERSION is deliberately NOT bumped. */
+    backpackTier: 1 | 2 | 3 | 4 | 5;
+    /** M2D1 #2 — backpack contents (additive field). Absent reads as []. */
+    backpackItems: (InventorySlot | null)[];
+    /** M2D2 #1 — equipped jewelry (additive field). Absent reads as [].
+     *  SAVE_SCHEMA_VERSION is deliberately NOT bumped. */
+    equippedRings: (InventorySlot | null)[];
+    equippedNecklaces: (InventorySlot | null)[];
+    equippedBracelets: (InventorySlot | null)[];
+    /** M2D2 #1 — cyberware install map (additive field). Absent reads as {}.
+     *  SAVE_SCHEMA_VERSION is deliberately NOT bumped. */
+    cyberware: CyberwareState;
+    /** M2D2 #1 — Bytegold balance (additive field). Absent reads as 0. */
+    bytegold: number;
+    /** M2D2 #1 — Bytechip arm implants (additive field). Absent reads as
+     *  neither side owned. */
+    hasBytechip: { L: boolean; R: boolean };
+    /** M2D2 #1 — world drops (additive field). Absent / malformed reads as
+     *  []. SAVE_SCHEMA_VERSION is deliberately NOT bumped. */
+    worldDrops: WorldDrop[];
+    /** M2D2 #1 — inside the edge house (additive field). Absent reads as
+     *  false. SAVE_SCHEMA_VERSION is deliberately NOT bumped. */
+    inHouse: boolean;
+    /** M2D4 #1 — dungeon state (additive fields). Absent / malformed reads as
+     *  0 / 0 / false / []. SAVE_SCHEMA_VERSION is deliberately NOT bumped. */
+    dungeonRoom: number;
+    dungeonCheckpointRoom: number;
+    dungeonEntering: boolean;
+    dungeonRoomCleared: number[];
+    /** M2D4 #2 — dungeon boss defeated (additive; absent reads as false). */
+    bossDefeated: boolean;
   };
   quests: Quest[];
   completedQuestIds: string[];
@@ -488,6 +741,14 @@ const GLOBAL_CONFIG_KEY = 'abyssion_global_config';
  *  read by loadGame. A mismatch warns once and the save still loads as-is. */
 const SAVE_SCHEMA_VERSION = 1;
 let versionMismatchWarned = false;
+
+/** M2D1 #2 — monotonic suffix so two curses applied inside the same
+ *  millisecond still receive distinct ids. */
+let debuffInstanceSeq = 0;
+function nextDebuffId(): string {
+  debuffInstanceSeq += 1;
+  return `debuff-${Date.now().toString(36)}-${debuffInstanceSeq}`;
+}
 
 type UnknownRecord = Record<string, unknown>;
 
@@ -832,38 +1093,66 @@ const ENEMY_DROP_TABLES: Record<
   }[]
 > = {
   'Bouncy Slime': [
-    { itemId: 'small_potion', chance: 0.40, minCount: 1, maxCount: 1 },
-    { itemId: 'arcane_shard', chance: 0.15, minCount: 1, maxCount: 1 },
+    { itemId: 'small_potion', chance: 0.10, minCount: 1, maxCount: 1 },
+    { itemId: 'arcane_shard', chance: 0.10, minCount: 1, maxCount: 1 },
+    { itemId: 'first_aid_kit', chance: 0.01, minCount: 1, maxCount: 1 },
   ],
   'Arena Slime': [
-    { itemId: 'small_potion', chance: 0.40, minCount: 1, maxCount: 1 },
-    { itemId: 'arcane_shard', chance: 0.15, minCount: 1, maxCount: 1 },
+    { itemId: 'small_potion', chance: 0.10, minCount: 1, maxCount: 1 },
+    { itemId: 'arcane_shard', chance: 0.10, minCount: 1, maxCount: 1 },
+    { itemId: 'first_aid_kit', chance: 0.01, minCount: 1, maxCount: 1 },
   ],
   'Dire Wolf': [
-    { itemId: 'beef_steak', chance: 0.30, minCount: 1, maxCount: 1 },
+    { itemId: 'beef_steak', chance: 0.10, minCount: 1, maxCount: 1 },
     { itemId: 'leather_armour', chance: 0.10, minCount: 1, maxCount: 1 },
+    { itemId: 'first_aid_kit', chance: 0.01, minCount: 1, maxCount: 1 },
   ],
   'Arena Wolf': [
-    { itemId: 'beef_steak', chance: 0.30, minCount: 1, maxCount: 1 },
+    { itemId: 'beef_steak', chance: 0.10, minCount: 1, maxCount: 1 },
     { itemId: 'leather_armour', chance: 0.10, minCount: 1, maxCount: 1 },
+    { itemId: 'first_aid_kit', chance: 0.01, minCount: 1, maxCount: 1 },
   ],
   'Thornback': [
-    { itemId: 'thornback_spine', chance: 0.60, minCount: 1, maxCount: 1 },
-    { itemId: 'iron_ore', chance: 0.30, minCount: 1, maxCount: 1 },
+    { itemId: 'thornback_spine', chance: 0.10, minCount: 1, maxCount: 1 },
+    { itemId: 'iron_ore', chance: 0.10, minCount: 1, maxCount: 1 },
+    { itemId: 'first_aid_kit', chance: 0.01, minCount: 1, maxCount: 1 },
   ],
   'Bandit Fighter': [
-    { itemId: 'arrow_bundle', chance: 0.35, minCount: 1, maxCount: 2 },
-    { itemId: 'iron_ore', chance: 0.25, minCount: 1, maxCount: 1 },
-    { itemId: 'bread', chance: 0.30, minCount: 1, maxCount: 1 },
+    { itemId: 'arrow_bundle', chance: 0.10, minCount: 1, maxCount: 2 },
+    { itemId: 'iron_ore', chance: 0.10, minCount: 1, maxCount: 1 },
+    { itemId: 'bread', chance: 0.10, minCount: 1, maxCount: 1 },
+    { itemId: 'first_aid_kit', chance: 0.01, minCount: 1, maxCount: 1 },
   ],
   'Arena Bandit': [
-    { itemId: 'arrow_bundle', chance: 0.35, minCount: 1, maxCount: 2 },
-    { itemId: 'iron_ore', chance: 0.25, minCount: 1, maxCount: 1 },
-    { itemId: 'bread', chance: 0.30, minCount: 1, maxCount: 1 },
+    { itemId: 'arrow_bundle', chance: 0.10, minCount: 1, maxCount: 2 },
+    { itemId: 'iron_ore', chance: 0.10, minCount: 1, maxCount: 1 },
+    { itemId: 'bread', chance: 0.10, minCount: 1, maxCount: 1 },
+    { itemId: 'first_aid_kit', chance: 0.01, minCount: 1, maxCount: 1 },
   ],
   'Arcane Mage': [
-    { itemId: 'arcane_shard', chance: 0.50, minCount: 1, maxCount: 2 },
-    { itemId: 'small_potion', chance: 0.35, minCount: 1, maxCount: 1 },
+    { itemId: 'arcane_shard', chance: 0.10, minCount: 1, maxCount: 2 },
+    { itemId: 'small_potion', chance: 0.10, minCount: 1, maxCount: 1 },
+    { itemId: 'first_aid_kit', chance: 0.01, minCount: 1, maxCount: 1 },
+  ],
+  'Crystal Mage': [
+    { itemId: 'arcane_shard', chance: 0.10, minCount: 1, maxCount: 1 },
+    { itemId: 'first_aid_kit', chance: 0.01, minCount: 1, maxCount: 1 },
+  ],
+  'Fire Mage': [
+    { itemId: 'arcane_shard', chance: 0.10, minCount: 1, maxCount: 1 },
+    { itemId: 'bread', chance: 0.10, minCount: 1, maxCount: 1 },
+    { itemId: 'first_aid_kit', chance: 0.01, minCount: 1, maxCount: 1 },
+  ],
+  'Frost Mage': [
+    { itemId: 'small_potion', chance: 0.10, minCount: 1, maxCount: 1 },
+    { itemId: 'first_aid_kit', chance: 0.01, minCount: 1, maxCount: 1 },
+  ],
+  'Fangery': [
+    { itemId: 'beef_steak', chance: 0.10, minCount: 1, maxCount: 1 },
+    { itemId: 'first_aid_kit', chance: 0.01, minCount: 1, maxCount: 1 },
+  ],
+  'Ice Ally': [
+    { itemId: 'arcane_shard', chance: 0.05, minCount: 1, maxCount: 1 },
   ],
 };
 
@@ -901,6 +1190,26 @@ function safeNumber(value: unknown, fallback: number): number {
   return typeof value === 'number' && Number.isFinite(value) ? value : fallback;
 }
 
+/** M2D1 #2 — backpack tier names, index 0 = tier 1. Display only; the tier
+ *  itself lives on player.backpackTier. */
+export const BACKPACK_TIER_NAMES = [
+  'small', 'medium', 'large', 'superior', 'hyperium',
+] as const;
+
+/** M2D1 #2 — grid geometry per backpack tier (12 / 24 / 36 / 45 / 54 slots).
+ *  Derived slot count is cols * rows; the panel pads player.backpackItems to
+ *  match, so a sparse or over-long array is always rendered correctly. */
+export const BACKPACK_TIER_GRID: Record<
+  1 | 2 | 3 | 4 | 5,
+  { cols: number; rows: number }
+> = {
+  1: { cols: 6, rows: 2 },
+  2: { cols: 6, rows: 4 },
+  3: { cols: 6, rows: 6 },
+  4: { cols: 9, rows: 5 },
+  5: { cols: 9, rows: 6 },
+};
+
 export const useGameStore = create<GameState>((set, get) => ({
   player: {
     health: 100,
@@ -918,6 +1227,22 @@ export const useGameStore = create<GameState>((set, get) => ({
     stats: createPlayerStats(),
     totalKills: 0,
     mastery: {},
+    debuffs: [],
+    backpackTier: 1,
+    backpackItems: [],
+    equippedRings: [],
+    equippedNecklaces: [],
+    equippedBracelets: [],
+    cyberware: {},
+    bytegold: 0,
+    hasBytechip: { L: false, R: false },
+    worldDrops: [],
+    inHouse: false,
+    dungeonRoom: 0,
+    dungeonCheckpointRoom: 0,
+    dungeonEntering: false,
+    dungeonRoomCleared: [],
+    bossDefeated: false,
     equippedArmourSlots: { helmet: null, chest: null, leggings: null, boots: null },
     equippedArmour: null,
     invincible: false,
@@ -1090,6 +1415,9 @@ export const useGameStore = create<GameState>((set, get) => ({
 
     // Handle Death
     if (newHealth <= 0) {
+      // M2D1 #2 — dying clears every active curse instead of carrying it
+      // into the respawn.
+      get().clearDebuffs();
       set((state) => ({ ui: { ...state.ui, deathOverlay: true } }));
       // Cancel any pending respawn before scheduling a new one
       if (respawnTimeoutId) clearTimeout(respawnTimeoutId);
@@ -1306,6 +1634,27 @@ export const useGameStore = create<GameState>((set, get) => ({
       return false;
     }
 
+    // M2D1 #2 — cure items cleanse active curses instead of healing. The cure
+    // path deliberately skips the full-health guard below: a cure is not a
+    // heal, so it may be used at full HP, and the item is still consumed.
+    const cureFraction = CURE_ITEMS[targetId];
+    if (cureFraction !== undefined) {
+      const { inv: cureInv } = removeItem(player.      inventory, targetId, 1);
+      set((state) => ({
+        player: {
+          ...state.player,
+          inventory: cureInv,
+          itemCooldownUntil: now + 10000,
+        }
+      }));
+      get().cureDebuffs(cureFraction);
+      // M2D2 #1 — a cure is its own event: announce the cleanse only after the
+      // authoritative cureDebuffs write above succeeded.
+      notifyCureUsed(getItem(targetId)?.name ?? targetId);
+      get().addNotification(`Used ${getItem(targetId)?.name ?? 'item'}.`);
+      return true;
+    }
+
     if (player.health >= player.maxHealth) {
       get().addNotification(t('notify.healthFull', get().settings.language as Lang));
       return false;
@@ -1463,6 +1812,22 @@ export const useGameStore = create<GameState>((set, get) => ({
         stats: createPlayerStats(),
         totalKills: 0,
         mastery: {},
+        debuffs: [],
+        backpackTier: 1,
+        backpackItems: [],
+        equippedRings: [],
+        equippedNecklaces: [],
+        equippedBracelets: [],
+        cyberware: {},
+        bytegold: 0,
+        hasBytechip: { L: false, R: false },
+        worldDrops: [],
+        inHouse: false,
+        dungeonRoom: 0,
+        dungeonCheckpointRoom: 0,
+        dungeonEntering: false,
+        dungeonRoomCleared: [],
+        bossDefeated: false,
         equippedArmourSlots: { helmet: null, chest: null, leggings: null, boots: null },
     equippedArmour: null,
         archetype: 'fighter',
@@ -1763,6 +2128,10 @@ export const useGameStore = create<GameState>((set, get) => ({
   },
 
   addLootDrop: (loot) => {
+    // M2D2 #1 — remember the most recent world position. Enemy death effects
+    // publish their loot just before onEnemyKilled, so this is the enemy's
+    // last known position for the overflow world-drop path.
+    lastPublishedLootPosition.pos = [loot.x, loot.y, loot.z];
     const id = Math.random().toString(36).substring(2, 9);
     set((state) => ({
       lootDrops: [...state.lootDrops, { ...loot, id }]
@@ -2050,6 +2419,16 @@ export const useGameStore = create<GameState>((set, get) => ({
           set((state) => ({ player: { ...state.player, inventory: inv } }));
           get().addNotification(`🏆 ${enemyName} dropped ${added}x ${def.name}`);
         }
+        // M2D2 #1 — whatever would not fit lands in the world instead.
+        const overflow = reward.count - added;
+        if (overflow > 0) {
+          get().spawnWorldDrop(
+            reward.itemId,
+            overflow,
+            lastPublishedLootPosition.pos ?? get().player.position,
+            'enemy',
+          );
+        }
       }
     }
 
@@ -2116,13 +2495,28 @@ export const useGameStore = create<GameState>((set, get) => ({
     // as world loot through their own addLootDrop path.
     const drops = rollDrops(enemyName, Math.random);
     if (drops.length > 0) {
+      // M2D2 #1 — anything that does not fit in the inventory is collected
+      // here and spawned as a world drop at the enemy's last known position.
+      const overflowDrops: { itemId: string; count: number }[] = [];
       set((state) => {
         let inv = state.player.inventory;
         for (const d of drops) {
-          inv = addItem(inv, d.itemId, d.count).inv;
+          const result = addItem(inv, d.itemId, d.count);
+          inv = result.inv;
+          if (result.added < d.count) {
+            overflowDrops.push({ itemId: d.itemId, count: d.count - result.added });
+          }
         }
         return { player: { ...state.player, inventory: inv } };
       });
+      for (const o of overflowDrops) {
+        get().spawnWorldDrop(
+          o.itemId,
+          o.count,
+          lastPublishedLootPosition.pos ?? get().player.position,
+          'enemy',
+        );
+      }
     }
 
     // Arena progression: 3 actual kills -> exactly one +1 level. The
@@ -2251,7 +2645,15 @@ export const useGameStore = create<GameState>((set, get) => ({
         ...state.player,
         health: state.player.maxHealth,
         stamina: state.player.maxStamina,
-        position: state.player.checkpointPos || [0, 1, 0],
+        // M2D4 #1 — inside the dungeon, respawn at the last checkpoint room's
+        // entry instead of the main-world checkpoint (outside the dungeon the
+        // existing checkpoint behaviour is untouched).
+        position: state.player.dungeonRoom > 0
+          ? dungeonRoomEntryWorld(state.player.dungeonCheckpointRoom > 0 ? state.player.dungeonCheckpointRoom : 1)
+          : (state.player.checkpointPos || [0, 1, 0]),
+        dungeonRoom: state.player.dungeonRoom > 0
+          ? (state.player.dungeonCheckpointRoom > 0 ? state.player.dungeonCheckpointRoom : 1)
+          : state.player.dungeonRoom,
         invincible: false,
         isDodging: false,
         isAttacking: false,
@@ -2292,6 +2694,22 @@ export const useGameStore = create<GameState>((set, get) => ({
       stats,
       totalKills,
       mastery,
+      debuffs,
+      backpackTier,
+      backpackItems,
+      equippedRings,
+      equippedNecklaces,
+      equippedBracelets,
+      cyberware,
+      bytegold,
+      hasBytechip,
+      worldDrops,
+      inHouse,
+      dungeonRoom,
+      dungeonCheckpointRoom,
+      dungeonEntering,
+      dungeonRoomCleared,
+      bossDefeated,
       equippedArmourSlots,
       equippedArmour,
     } = state.player;
@@ -2316,6 +2734,22 @@ export const useGameStore = create<GameState>((set, get) => ({
         stats,
         totalKills,
         mastery,
+        debuffs,
+        backpackTier,
+        backpackItems,
+        equippedRings,
+        equippedNecklaces,
+        equippedBracelets,
+        cyberware,
+        bytegold,
+        hasBytechip,
+        worldDrops,
+        inHouse,
+        dungeonRoom,
+        dungeonCheckpointRoom,
+        dungeonEntering,
+        dungeonRoomCleared,
+        bossDefeated,
         equippedArmourSlots,
         equippedArmour,
         hotbar: { slots: [...state.hotbar.slots], selectedSlot: state.hotbar.selectedSlot },
@@ -2514,6 +2948,61 @@ export const useGameStore = create<GameState>((set, get) => ({
         mastery: isRecord(loadedPlayer.mastery)
           ? (loadedPlayer.mastery as Record<string, number>)
           : {},
+        // M2D1 #2 — active curses (additive). Saves without this key load
+        // with none active.
+        debuffs: Array.isArray(loadedPlayer.debuffs)
+          ? (loadedPlayer.debuffs as DebuffInstance[])
+          : [],
+        // M2D1 #2 — backpack (additive). Absent / malformed reads as tier 1
+        // with an empty pack; the tier is clamped into the 1..5 range.
+        backpackTier: (() => {
+          const raw = Math.round(safeNumber(loadedPlayer.backpackTier, 1));
+          if (raw < 1) return 1;
+          if (raw > 5) return 5;
+          return raw as 1 | 2 | 3 | 4 | 5;
+        })(),
+        backpackItems: Array.isArray(loadedPlayer.backpackItems)
+          ? (loadedPlayer.backpackItems as (InventorySlot | null)[])
+          : [],
+        // M2D2 #1 — equipped jewelry (additive). Absent / malformed reads as
+        // an empty (fully unequipped) set.
+        equippedRings: Array.isArray(loadedPlayer.equippedRings)
+          ? (loadedPlayer.equippedRings as (InventorySlot | null)[])
+          : [],
+        equippedNecklaces: Array.isArray(loadedPlayer.equippedNecklaces)
+          ? (loadedPlayer.equippedNecklaces as (InventorySlot | null)[])
+          : [],
+        equippedBracelets: Array.isArray(loadedPlayer.equippedBracelets)
+          ? (loadedPlayer.equippedBracelets as (InventorySlot | null)[])
+          : [],
+        // M2D2 #1 — cyberware + Bytegold + Bytechip (additive). Absent /
+        // malformed reads as {} / 0 / neither side owned; the schema version
+        // is not bumped.
+        cyberware: isRecord(loadedPlayer.cyberware)
+          ? (loadedPlayer.cyberware as CyberwareState)
+          : {},
+        bytegold: Math.max(0, Math.round(safeNumber(loadedPlayer.bytegold, 0))),
+        hasBytechip: isRecord(loadedPlayer.hasBytechip)
+          ? {
+              L: (loadedPlayer.hasBytechip as UnknownRecord).L === true,
+              R: (loadedPlayer.hasBytechip as UnknownRecord).R === true,
+            }
+          : { L: false, R: false },
+        // M2D2 #1 — world drops (additive). Absent / malformed reads as [].
+        worldDrops: Array.isArray(loadedPlayer.worldDrops)
+          ? (loadedPlayer.worldDrops as WorldDrop[])
+          : [],
+        // M2D2 #1 — inside-the-edge-house flag (additive). Absent reads false.
+        inHouse: loadedPlayer.inHouse === true,
+        // M2D4 #1 — dungeon state (additive). Absent / malformed reads as
+        // 0 / 0 / false / []; clamps mirror the store's own 0..11 domain.
+        dungeonRoom: Math.max(0, Math.min(11, Math.round(safeNumber(loadedPlayer.dungeonRoom, 0)))),
+        dungeonCheckpointRoom: Math.max(0, Math.min(11, Math.round(safeNumber(loadedPlayer.dungeonCheckpointRoom, 0)))),
+        dungeonEntering: loadedPlayer.dungeonEntering === true,
+        dungeonRoomCleared: Array.isArray(loadedPlayer.dungeonRoomCleared)
+          ? (loadedPlayer.dungeonRoomCleared as unknown[]).filter((n): n is number => typeof n === 'number')
+          : [],
+        bossDefeated: loadedPlayer.bossDefeated === true,
         equippedArmourSlots: (() => {
           const persisted = isRecord(loadedPlayer.equippedArmourSlots)
             ? (loadedPlayer.equippedArmourSlots as UnknownRecord) : {};
@@ -2784,7 +3273,332 @@ export const useGameStore = create<GameState>((set, get) => ({
         mastery: { ...state.player.mastery, [itemId]: next },
       },
     }));
+    // M2D2 #1 — announce a real level change only. Level is derived from EXP
+    // (never stored), so both sides are computed from the before/after values.
+    // A multi-level jump is one toast, not one per level crossed.
+    const oldLevel = masteryLevelFor(cur);
+    const newLevel = masteryLevelFor(next);
+    if (newLevel > oldLevel) {
+      notifyMasteryLevelUp(getItem(itemId)?.name ?? itemId, oldLevel, newLevel);
+    }
   },
+
+  applyDebuff: (type, tier, durationSec, source = 'enemy') => {
+    // M2D1 #2 — the backpack is always equipped, so an ITEM-sourced curse is a
+    // no-op while it is worn (tier >= 1). This is a structural hook: nothing
+    // calls applyDebuff with source 'item' yet. Enemy curses are unaffected.
+    if (source === 'item' && get().player.backpackTier >= 1) return;
+    set((state) => {
+      const existingIndex = state.player.debuffs.findIndex(
+        (d) => d.type === type
+      );
+      if (existingIndex === -1) {
+        const instance: DebuffInstance = {
+          id: nextDebuffId(),
+          type,
+          tier,
+          remainingSec: durationSec,
+          source,
+        };
+        return {
+          player: {
+            ...state.player,
+            debuffs: [...state.player.debuffs, instance],
+          },
+        };
+      }
+      const existing = state.player.debuffs[existingIndex];
+      const merged: DebuffInstance = {
+        ...existing,
+        tier: (existing.tier > tier ? existing.tier : tier) as DebuffTier,
+        remainingSec: existing.remainingSec + durationSec,
+      };
+      const next = [...state.player.debuffs];
+      next[existingIndex] = merged;
+      return {
+        player: { ...state.player, debuffs: next },
+      };
+    });
+  },
+
+  removeDebuff: (id) => set((state) => {
+    if (!state.player.debuffs.some((d) => d.id === id)) return {};
+    return {
+      player: { ...state.player, debuffs: state.player.debuffs.filter((d) => d.id !== id) },
+    };
+  }),
+
+  tickDebuffs: (deltaSec) => set((state) => {
+    const active = state.player.debuffs;
+    // No curses active: return without allocating a new player object. This is
+    // the common case and the action is called once per frame.
+    if (active.length === 0) return {};
+    const next = active
+      .map((d) => ({ ...d, remainingSec: d.remainingSec - deltaSec }))
+      .filter((d) => d.remainingSec > 0);
+    return { player: { ...state.player, debuffs: next } };
+  }),
+
+  cureDebuffs: (fraction) => set((state) => {
+    const active = state.player.debuffs;
+    if (active.length === 0) return {};
+    // A cure shortens what is LEFT of each curse by `fraction`; curses driven
+    // to 0 are dropped. Because the fraction applies to the remaining time,
+    // repeated small cures converge and never remove a curse outright.
+    const next = active
+      .map((d) => ({ ...d, remainingSec: d.remainingSec * (1 - fraction) }))
+      .filter((d) => d.remainingSec > 0);
+    return { player: { ...state.player, debuffs: next } };
+  }),
+
+  clearDebuffs: () => set((state) => {
+    if (state.player.debuffs.length === 0) return {};
+    return { player: { ...state.player, debuffs: [] } };
+  }),
+
+  // M2D1 #2 — backpack. Tier and contents are independent: changing the tier
+  // never moves or drops items, the panel pads/truncates on read.
+  setBackpackTier: (tier) => set((state) => ({
+    player: { ...state.player, backpackTier: tier },
+  })),
+
+  setBackpackItems: (items) => set((state) => ({
+    player: { ...state.player, backpackItems: items },
+  })),
+
+  // ── M2D2 #1 — jewelry ───────────────────────────────────────────
+  // Equipping consumes one unit from player.inventory and writes the piece
+  // into the first free slot of its type; unequipping reverses it through
+  // addItem. The three arrays are persisted as-is (sparse arrays are padded
+  // on read), so no state is ever derived-and-stored here.
+  equipJewelry: (slot, itemId) => {
+    const state = get();
+    const current = state.player[JEWELRY_SLOT_KEYS[slot]];
+    // Pad a sparse (or legacy-empty) array to the full slot count before
+    // looking for a gap, so slot 0 is reachable on a first equip.
+    const next: (InventorySlot | null)[] = Array.from(
+      { length: JEWELRY_SLOT_COUNTS[slot] },
+      (_, i) => current[i] ?? null,
+    );
+    const index = next.findIndex((s) => s === null);
+    if (index === -1) return false;
+    const { inv, removed } = removeItem(state.player.inventory, itemId, 1);
+    if (removed <= 0) return false;
+    next[index] = { id: `${slot}-${index}-${Date.now()}`, itemId, count: 1 };
+    set((s) => {
+      const player = { ...s.player, inventory: inv };
+      if (slot === 'ring') player.equippedRings = next;
+      else if (slot === 'necklace') player.equippedNecklaces = next;
+      else player.equippedBracelets = next;
+      return { player };
+    });
+    return true;
+  },
+
+  unequipJewelry: (slot, index) => {
+    const state = get();
+    const current = state.player[JEWELRY_SLOT_KEYS[slot]];
+    const entry = current[index];
+    if (!entry) return;
+    const { inv } = addItem(state.player.inventory, entry.itemId, 1);
+    const next: (InventorySlot | null)[] = Array.from(
+      { length: JEWELRY_SLOT_COUNTS[slot] },
+      (_, i) => current[i] ?? null,
+    );
+    next[index] = null;
+    set((s) => {
+      const player = { ...s.player, inventory: inv };
+      if (slot === 'ring') player.equippedRings = next;
+      else if (slot === 'necklace') player.equippedNecklaces = next;
+      else player.equippedBracelets = next;
+      return { player };
+    });
+  },
+
+  // M2D2 #1 — derived on read; at most 17 slots per call.
+  getJewelryBonuses: () => {
+    const { equippedRings, equippedNecklaces, equippedBracelets } = get().player;
+    let damage = 0;
+    let speed = 0;
+    let health = 0;
+    const accumulate = (slot: JewelrySlot, entries: (InventorySlot | null)[]) => {
+      for (const entry of entries) {
+        if (!entry) continue;
+        const meta = getItem(entry.itemId)?.metadata;
+        if (!meta) continue;
+        // A slot/effect mismatch contributes nothing (defensive).
+        if (meta.jewelrySlot !== slot) continue;
+        const raw = meta.jewelryValue;
+        const value = typeof raw === 'number' ? raw : 0;
+        if (meta.jewelryEffect === 'damage') damage += value;
+        else if (meta.jewelryEffect === 'speed') speed += value;
+        else if (meta.jewelryEffect === 'health') health += value;
+      }
+    };
+    accumulate('ring', equippedRings);
+    accumulate('necklace', equippedNecklaces);
+    accumulate('bracelet', equippedBracelets);
+    return {
+      damageMult: 1 + damage,
+      attackSpeedMult: 1 + speed,
+      rateOfFireMult: 1 + speed,
+      maxHealthMult: 1 + health,
+    };
+  },
+
+  // ── M2D2 #1 — cyberware ─────────────────────────────────────────
+  // Placeholder skeleton: install / uninstall / break only mutate
+  // player.cyberware. No stat effect, no cost, no shop — tier is always 1
+  // and `broken` is a stored flag nothing consumes yet. A paired slot stores
+  // { L, R }; a single slot stores one CyberwareSlotState directly.
+  installCyberware: (slotId, itemId, side) => {
+    const state = get();
+    const current = state.player.cyberware[slotId];
+    const fresh: CyberwareSlotState = { installed: itemId, tier: 1, broken: false };
+    let entry: CyberwareSlotState | { L: CyberwareSlotState; R: CyberwareSlotState };
+    if (CYBERWARE_PAIRED_SLOT_IDS.has(slotId)) {
+      const pair =
+        current && 'L' in current
+          ? current
+          : { L: emptyCyberwareSlotState(), R: emptyCyberwareSlotState() };
+      const which: 'L' | 'R' = side ?? 'L';
+      if (pair[which].installed) return false;
+      entry = { ...pair, [which]: fresh };
+    } else {
+      if (current && 'installed' in current && current.installed) return false;
+      entry = fresh;
+    }
+    const next: CyberwareState = { ...state.player.cyberware, [slotId]: entry };
+    set((s) => ({ player: { ...s.player, cyberware: next } }));
+    return true;
+  },
+
+  uninstallCyberware: (slotId, side) => {
+    const state = get();
+    const current = state.player.cyberware[slotId];
+    if (!current) return;
+    let entry: CyberwareSlotState | { L: CyberwareSlotState; R: CyberwareSlotState };
+    if (CYBERWARE_PAIRED_SLOT_IDS.has(slotId)) {
+      if (!('L' in current)) return;
+      const which: 'L' | 'R' = side ?? 'L';
+      entry = { ...current, [which]: emptyCyberwareSlotState() };
+    } else {
+      if (!('installed' in current)) return;
+      entry = emptyCyberwareSlotState();
+    }
+    const next: CyberwareState = { ...state.player.cyberware, [slotId]: entry };
+    set((s) => ({ player: { ...s.player, cyberware: next } }));
+  },
+
+  setCyberwareBroken: (slotId, broken, side) => {
+    const state = get();
+    const current = state.player.cyberware[slotId];
+    if (!current) return;
+    let entry: CyberwareSlotState | { L: CyberwareSlotState; R: CyberwareSlotState };
+    if (CYBERWARE_PAIRED_SLOT_IDS.has(slotId)) {
+      if (!('L' in current)) return;
+      const which: 'L' | 'R' = side ?? 'L';
+      entry = { ...current, [which]: { ...current[which], broken } };
+    } else {
+      if (!('installed' in current)) return;
+      entry = { ...current, broken };
+    }
+    const next: CyberwareState = { ...state.player.cyberware, [slotId]: entry };
+    set((s) => ({ player: { ...s.player, cyberware: next } }));
+  },
+
+  // M2D2 #1 — Bytegold / Bytechip placeholders. No exchange action yet; the
+  // rate lives in COIN_PER_BYTEGOLD for a future session. A negative `amount`
+  // can never drive the balance below 0.
+  addBytegold: (amount) => set((state) => ({
+    player: { ...state.player, bytegold: Math.max(0, state.player.bytegold + amount) },
+  })),
+
+  setBytechip: (side, has) => set((state) => ({
+    player: { ...state.player, hasBytechip: { ...state.player.hasBytechip, [side]: has } },
+  })),
+
+  // ── M2D2 #1 — world drops ──────────────────────────────────────
+  // A dropped item becomes a Rapier rigid body (see GameScene's
+  // WorldDropMeshes). The store owns the authoritative list; Rapier owns the
+  // simulation, so only the spawn position is recorded here.
+  spawnWorldDrop: (itemId, count, position, droppedBy) => {
+    const id = `drop_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 9)}`;
+    set((state) => ({
+      player: {
+        ...state.player,
+        worldDrops: [
+          ...state.player.worldDrops,
+          { id, itemId, count, position, droppedAt: Date.now(), droppedBy },
+        ],
+      },
+    }));
+    return id;
+  },
+
+  removeWorldDrop: (id) => set((state) => {
+    const next = state.player.worldDrops.filter((d) => d.id !== id);
+    if (next.length === state.player.worldDrops.length) return {};
+    return { player: { ...state.player, worldDrops: next } };
+  }),
+
+  // M2D2 #1 — 60-minute real-time expiry. O(n) with a small n; returns the
+  // same object when nothing expires so callers never churn subscribers.
+  tickWorldDrops: (now) => set((state) => {
+    const drops = state.player.worldDrops;
+    if (drops.length === 0) return {};
+    const next = drops.filter((d) => now - d.droppedAt < WORLD_DROP_TTL_MS);
+    if (next.length === drops.length) return {};
+    return { player: { ...state.player, worldDrops: next } };
+  }),
+
+  // M2D2 #1 — edge-house occupancy. Door-threshold state only: no lock, no
+  // collider change, enemies may enter. The house mesh itself is pure geometry.
+  enterHouse: () => set((state) => (
+    state.player.inHouse ? {} : { player: { ...state.player, inHouse: true } }
+  )),
+  leaveHouse: () => set((state) => (
+    state.player.inHouse ? { player: { ...state.player, inHouse: false } } : {}
+  )),
+
+  // M2D4 #1 — dungeon entry / exit / checkpoint. Positions are written here;
+  // Player.tsx applies the Rapier body relocation on the dungeonRoom
+  // transition (the body, not the store, is authoritative for physics).
+  enterDungeon: () => set((state) => ({
+    player: {
+      ...state.player,
+      dungeonRoom: 1,
+      dungeonCheckpointRoom: 1,
+      dungeonEntering: true,
+      position: dungeonRoomEntryWorld(1),
+    },
+  })),
+  exitDungeon: () => set((state) => ({
+    player: {
+      ...state.player,
+      dungeonRoom: 0,
+      dungeonEntering: false,
+      position: dungeonExitWorldPosition(),
+    },
+  })),
+  setDungeonCheckpoint: (room) => set((state) => ({
+    player: { ...state.player, dungeonCheckpointRoom: Math.max(0, Math.min(11, Math.round(room))) },
+  })),
+  setDungeonRoom: (room) => set((state) => ({
+    player: { ...state.player, dungeonRoom: Math.max(0, Math.min(11, Math.round(room))) },
+  })),
+  setDungeonEntering: (active) => set((state) => ({
+    player: { ...state.player, dungeonEntering: active },
+  })),
+  markDungeonRoomCleared: (room) => set((state) => (
+    state.player.dungeonRoomCleared.includes(room)
+      ? {}
+      : { player: { ...state.player, dungeonRoomCleared: [...state.player.dungeonRoomCleared, room] } }
+  )),
+  /** M2D4 #2 — mark the dungeon boss defeated (idempotent). */
+  defeatBoss: () => set((state) =>
+    state.player.bossDefeated ? {} : { player: { ...state.player, bossDefeated: true } }
+  ),
 
   grantItemExpById: (itemId, amount) => {
     const map = get().player.itemProgression;

@@ -9,7 +9,7 @@ import { SWORD_SKILLS, SWORD_SKILL_COOLDOWNS } from '@/lib/swordSkills';
 import { WATER_STAFF_SKILLS, SKILL_COOLDOWNS as STAFF_SKILL_COOLDOWNS } from '@/lib/staffSkills';
 import { M1887_SKILLS, DAGGER_SKILLS, M1887_SKILL_COOLDOWNS, DAGGER_SKILL_COOLDOWNS, RESONANCE_SKILLS, RESONANCE_SKILL_COOLDOWNS } from '@/lib/weaponContent';
 import { CROSSBOW_SKILLS, CROSSBOW_CONFIG, CROSSBOW_SKILL_COOLDOWNS } from '@/lib/crossbowContent';
-import { SKILL_UNLOCK_LEVELS } from '@/lib/progression';
+import { SKILL_UNLOCK_LEVELS, masteryLevelFor, isSkillUnlockedForWeapon, WEAPON_SKILL_UNLOCK_LEVELS, type SkillSlot } from '@/lib/progression';
 import { getItemCount } from '@/lib/inventory';
 import { useEffect, useRef, useState, useCallback } from 'react';
 import { t } from '@/lib/translations';
@@ -103,6 +103,10 @@ export function SkillBar({ preview = false, slot, showAmmo = false }: { preview?
   const gunAmmo = useGameStore((s) => s.gunAmmo);
   const crossbowAmmo = useGameStore((s) => s.crossbowAmmo);
   const skillHudConfig = useGameStore((s) => s.skillHudConfig);
+  // M2D2 #1 (F) — the mastery lock overlay must re-evaluate when mastery
+  // changes; `hotbar` alone cannot change on a mastery level-up, so the mastery
+  // record is read through its own narrow selector (same pattern as above).
+  const mastery = useGameStore((s) => s.player.mastery);
   const setInputs = useGameStore((s) => s.setInputs);
   const selected = hotbar.slots[hotbar.selectedSlot];
   const cat = weaponCategoryOf(selected);
@@ -265,6 +269,7 @@ export function SkillBar({ preview = false, slot, showAmmo = false }: { preview?
   // so every slot stays visible and selectable. The gun/crossbow ammo pill rides
   // with the F slot's element to stay at the end of the row.
   const rows = slot ? rendered.filter((sk) => sk.key === slot) : rendered;
+  const masteryLevel = itemId ? masteryLevelFor(mastery[itemId] ?? 0) : 0;
   const showGunPill = cat === 'gun' && selected !== 'crossbow';
   const showCrossbowPill = selected === 'crossbow';
   const renderAmmo = (showAmmo || slot === undefined) && (showGunPill || showCrossbowPill);
@@ -279,6 +284,12 @@ export function SkillBar({ preview = false, slot, showAmmo = false }: { preview?
         // bar can never show a skill as ready while gameplay still blocks it.
         const cd = sk.id ? (skillState.cooldowns[sk.id] ?? 0) : 0;
         const interactive = hasSkill && unlocked;
+        // M2D2 #1 (F) — mastery-gated lock. Only a slot that HAS a threshold in
+        // WEAPON_SKILL_UNLOCK_LEVELS can ever be locked; a missing entry means
+        // "unlocked at any mastery level" (the table is empty at HEAD).
+        const requiredMastery = itemId !== null ? WEAPON_SKILL_UNLOCK_LEVELS[itemId]?.[sk.key as SkillSlot] : undefined;
+        const masteryLocked = hasSkill && itemId !== null && requiredMastery !== undefined
+          && !isSkillUnlockedForWeapon(itemId, sk.key as SkillSlot, masteryLevel);
         // M1W4D1 #3 C4 — the skill NAME is gone from the HUD (it overlapped);
         // the slot shows key + icon + cooldown + locked dim. Real skill slots
         // (locked included) accept pointer events so the hover/long-press
@@ -312,11 +323,11 @@ export function SkillBar({ preview = false, slot, showAmmo = false }: { preview?
             }}
             onPointerUp={(e) => { clearPressTimer(); if (e.pointerType === 'touch') closeTip(); }}
             onPointerCancel={() => { clearPressTimer(); closeTip(); }}
-            className={`flex items-center gap-2 border px-3 py-1.5 ${canHover ? 'pointer-events-auto' : 'pointer-events-none'} ${interactive && !preview ? 'cursor-pointer active:bg-white/10' : 'cursor-default'}`}
+            className={`relative flex items-center gap-2 border px-3 py-1.5 ${masteryLocked ? 'opacity-50' : ''} ${canHover ? 'pointer-events-auto' : 'pointer-events-none'} ${interactive && !preview ? 'cursor-pointer active:bg-white/10' : 'cursor-default'}`}
             style={{
               background: !hasSkill ? 'rgba(10,10,10,0.4)' : unlocked ? 'rgba(20,16,8,0.85)' : 'rgba(10,10,10,0.7)',
               borderColor: !hasSkill ? 'rgba(90,90,90,0.2)' : unlocked ? 'rgba(214,138,49,0.55)' : 'rgba(120,120,120,0.25)',
-              opacity: !hasSkill ? 0.4 : unlocked ? 1 : 0.55,
+              opacity: masteryLocked ? 0.5 : !hasSkill ? 0.4 : unlocked ? 1 : 0.55,
             }}
           >
             <span className="text-sm font-black" style={{ color: unlocked ? '#e8d5ae' : '#777' }}>{sk.key}</span>
@@ -327,6 +338,17 @@ export function SkillBar({ preview = false, slot, showAmmo = false }: { preview?
             )}
             {interactive && cd > 0 && (
               <span className="text-xs font-bold" style={{ color: '#f87171' }}>{cd.toFixed(1)}s</span>
+            )}
+            {/* M2D2 #1 (F) — mastery lock overlay. Purely additive: the button
+                stays enabled and clickable and the glyph/name/layout are
+                untouched; pointer-events stay on the button for hover/press. */}
+            {masteryLocked && (
+              <span
+                className="pointer-events-none absolute inset-0 flex items-center justify-center text-[10px] font-black tracking-wide"
+                style={{ background: 'rgba(6,6,8,0.6)', color: '#f87171' }}
+              >
+                Locked {requiredMastery}
+              </span>
             )}
           </button>
         );

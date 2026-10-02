@@ -1,11 +1,11 @@
 'use client';
 
-import { useRef, useEffect } from 'react';
+import { useRef, useEffect, useState } from 'react';
 import { useFrame, useThree } from '@react-three/fiber';
 import { RigidBody, RapierRigidBody, CapsuleCollider, useRapier } from '@react-three/rapier';
-import { useKeyboardControls } from '@react-three/drei';
+import { useKeyboardControls, Html } from '@react-three/drei';
 import * as THREE from 'three';
-import { useGameStore, enemyTargets } from '@/lib/store';
+import { useGameStore, enemyTargets, type WorldDrop } from '@/lib/store';
 import { MOVEMENT_CONFIG as C } from '@/lib/movementConfig';
 import { COMBAT_CONFIG as CC } from '@/lib/combatConfig';
 import { combatAudio } from '@/lib/combatAudio';
@@ -19,6 +19,17 @@ import type { SwordSkill } from '@/lib/swordSkills';
 import { spawnSpell, updateSpells, resetSpells, getActiveSpells, spawnSlashBurst, tickSlashFx, resetSlashFx, getActiveSlashFx, type SpellInstance, type SwordSlashFx, type SpellCallbacks } from '@/lib/spellRunner';
 import { FATAMORGANA, DOZENS_OF_SLASHES, SWORD_SKILL_COOLDOWNS, type SwordSkillId } from '@/lib/swordSkills';
 import { masteryLevelFor, masteryPointsForEvent, statBonusMultiplier, isSkillUnlockedForWeapon, type SkillSlot } from '@/lib/progression';
+import { addItem } from '@/lib/inventory';
+import { aggregateMagnitudes, AIM_JITTER_MODE, RANDOM_MOVE_MODE } from '@/lib/debuffs';
+// M2D4 #1 — dungeon entry points (single source of truth lives in GameScene).
+import { dungeonRoomEntryWorld } from './GameScene';
+
+/** M2D2 #1 — the single edge house. GameScene imports these to place the
+ *  mesh; the bed interaction below uses BED_POSITION, so the geometry and the
+ *  sleep trigger cannot drift apart. The position is a placeholder at the map
+ *  edge and is meant to be moved by hand later. */
+export const HOUSE_POSITION: [number, number, number] = [38, 0, 10];
+export const BED_POSITION: [number, number, number] = [36.4, 0, 8.4];
 
 const SPEED = C.walkSpeed;
 
@@ -53,6 +64,7 @@ function impactWeaponFor(itemId: string | null): ImpactWeapon | null {
     case 'crossbow':
       return 'crossbow';
     case 'water_staff':
+    case 'all_for_staff':
       return 'staff';
     case 'resonance_core':
       return 'core';
@@ -150,6 +162,65 @@ const CROSSBOW_SKILL_EDGES: { key: string; pressed: boolean; skill: CrossbowSkil
   { key: 'skill2', pressed: false, skill: CROSSBOW_SKILLS[1] },
 ];
 
+// ── M2D4 #2 — ALL FOR STAFF (Phase 4) ───────────────────────────────────────
+// Player-local skill table (lib/staffSkills.ts is out of scope this phase).
+// Projectile skills reuse the existing spell runner via StaffSkill-shaped
+// records; C/V/F resolve directly through the authoritative takeDamage funnel
+// (and a body move for Holy Tele).
+export type AllForStaffSkillId =
+  | 'destructor_purple'
+  | 'pulsar'
+  | 'imperium_glaciale'
+  | 'hollow_cryfremag'
+  | 'holy_tele';
+
+interface AllForStaffSkill {
+  id: AllForStaffSkillId;
+  slot: SkillSlot;
+  name: string;
+  cooldown: number;
+  damage: number;
+}
+
+/** Slot order is Z/X/C/V/F — exactly skill1..skill5. */
+export const ALL_FOR_STAFF_SKILLS: readonly AllForStaffSkill[] = [
+  { id: 'destructor_purple', slot: 'Z', name: 'Destructor Purple', cooldown: 10, damage: 25 },
+  { id: 'pulsar', slot: 'X', name: 'Pulsar', cooldown: 15, damage: 50 },
+  { id: 'imperium_glaciale', slot: 'C', name: 'Imperium Glaciale', cooldown: 25, damage: 75 },
+  { id: 'hollow_cryfremag', slot: 'V', name: 'Hollow Cryfremag, D-ZOOM!', cooldown: 60, damage: 150 },
+  { id: 'holy_tele', slot: 'F', name: 'Holy Tele', cooldown: 12, damage: 0 },
+];
+
+const AFS_SKILL_EDGES: { key: string; pressed: boolean; skill: AllForStaffSkill }[] =
+  ALL_FOR_STAFF_SKILLS.map((skill, i) => ({
+    key: ['skill1', 'skill2', 'skill3', 'skill4', 'skill5'][i],
+    pressed: false,
+    skill,
+  }));
+
+/** M1 — the default attack: 10 damage at RoF 2/s. */
+const AFS_M1_INTERVAL = 0.5;
+
+interface TintedStaffSkill extends StaffSkill {
+  tint: 'purple' | 'pulse';
+}
+
+const AFS_M1_SPELL: TintedStaffSkill = {
+  id: 'waterball', name: 'All For Staff', kind: 'projectile', damage: 10, speed: 20, lifetime: 1.5, maxDistance: 30, tint: 'purple',
+};
+const AFS_DESTRUCTOR_SPELL: TintedStaffSkill = {
+  id: 'waterball', name: 'Destructor Purple', kind: 'projectile', damage: 25, speed: 24, lifetime: 2, maxDistance: 48, tint: 'purple',
+};
+const AFS_PULSAR_SPELL: TintedStaffSkill = {
+  id: 'waterbullet', name: 'Pulsar', kind: 'projectile', damage: 50, speed: 16, lifetime: 2.2, maxDistance: 35, tint: 'pulse',
+};
+
+// Shared purple / pulsing projectile assets (created once).
+const afsOrbGeo = new THREE.SphereGeometry(0.22, 12, 12);
+const afsOrbMat = new THREE.MeshToonMaterial({ color: '#c084fc', emissive: '#7c3aed', emissiveIntensity: 1.0 });
+const afsPulseGeo = new THREE.SphereGeometry(0.18, 12, 12);
+const afsPulseMat = new THREE.MeshToonMaterial({ color: '#f0abfc', emissive: '#a21caf', emissiveIntensity: 1.3 });
+
 // ── M2D1 #1 — mastery plumbing ──────────────────────────────────────────────
 // The edge tables above are already in slot order, so the slot letter for a
 // skill id reads straight off them: Z/X for every two-skill weapon, Z/X/C for
@@ -164,6 +235,7 @@ const SKILL_SLOT_BY_ID: Record<string, SkillSlot> = (() => {
     });
   };
   assign(WATER_STAFF_SKILLS, ['Z', 'X', 'C']);
+  assign(ALL_FOR_STAFF_SKILLS, ['Z', 'X', 'C', 'V', 'F']);
   assign([FATAMORGANA, DOZENS_OF_SLASHES], ['Z', 'X']);
   assign(M1887_SKILLS, ['Z', 'X']);
   assign(DAGGER_SKILLS, ['Z', 'X']);
@@ -214,6 +286,10 @@ export default function Player() {
   const colliderRef = useRef<any>(null);
   
   const [, getKeys] = useKeyboardControls();
+  // M2D2 #1 — sleep on the edge-house bed. All transient: never persisted.
+  const [sleeping, setSleeping] = useState(false);
+  const sleepCooldownRef = useRef(0); // Date.now() of the last sleep
+  const sleepTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   // Four-piece armour (M1W2D6 #5): derive from the authoritative store state.
   // Attached as children of the body hierarchy so armour follows idle, walk,
   // jump, fall, attack, dodge and hit transforms.
@@ -329,6 +405,13 @@ export default function Player() {
   const coreSkillCooldownRefs = useRef<Record<string, number>>({});
   const prevGunSkillInputRefs = useRef<Record<string, boolean>>({});
   const prevCoreSkillInputRefs = useRef<Record<string, boolean>>({});
+  // M2D4 #2 — All For Staff transient state: per-skill cooldowns, edge memory,
+  // the M1 rate-of-fire timer and the Pulsar second-pulse timer.
+  const afsCooldownsRef = useRef<Record<string, number>>({});
+  const prevAfsSkillInputRefs = useRef<Record<string, boolean>>({});
+  const afsM1TimerRef = useRef(0);
+  const afsPulsarRepeatRef = useRef(0);
+  const afsPulsarDirRef = useRef(new THREE.Vector3(0, 0, 1));
   const gunAmmoRef = useRef(M1887_CONFIG.ammoCapacity);
   const gunFireTimerRef = useRef(0); // rate-of-fire gate (basic fire)
   // M1887 muzzle flash: visible only during the 0.08s post-shot window.
@@ -393,6 +476,94 @@ export default function Player() {
     crossbowArrowMeshRefs.current.clear();
   }, [sceneForCleanup]);
 
+  // M2D2 #1 — world-drop pickup. The E key already drives NPC / checkpoint
+  // interaction in UI.tsx, so this listener defers to it and only acts while
+  // no interact prompt is active. Only the player picks up: enemy pickup AI is
+  // explicitly out of scope. Pickup radius is 2 m.
+  useEffect(() => {
+    const PICKUP_RADIUS_SQ = 2 * 2;
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.repeat || (e.key !== 'e' && e.key !== 'E')) return;
+      const st = useGameStore.getState();
+      if (st.ui.interactPrompt) return;
+      const drops = st.player.worldDrops;
+      if (drops.length === 0) return;
+      const [px, py, pz] = st.player.position;
+      let best: WorldDrop | null = null;
+      let bestDist = PICKUP_RADIUS_SQ;
+      for (const d of drops) {
+        const dx = d.position[0] - px;
+        const dy = d.position[1] - py;
+        const dz = d.position[2] - pz;
+        const distSq = dx * dx + dy * dy + dz * dz;
+        if (distSq <= bestDist) {
+          bestDist = distSq;
+          best = d;
+        }
+      }
+      if (!best) return;
+      const target = best;
+      const { inv, added } = addItem(st.player.inventory, target.itemId, target.count);
+      if (added <= 0) return;
+      if (added >= target.count) {
+        st.removeWorldDrop(target.id);
+        useGameStore.setState((s) => ({ player: { ...s.player, inventory: inv } }));
+      } else {
+        // Partial pickup (inventory filled up mid-stack): keep the remainder.
+        useGameStore.setState((s) => ({
+          player: {
+            ...s.player,
+            inventory: inv,
+            worldDrops: s.player.worldDrops.map((d) =>
+              d.id === target.id ? { ...d, count: d.count - added } : d,
+            ),
+          },
+        }));
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, []);
+
+  // M2D2 #1 — sleep on the edge-house bed. Pressing E within 2 m (horizontal)
+  // while no interact prompt is active starts a 3 s full-screen black fade and
+  // accelerates every active curse once by 1.1× (0.9× remaining). One sleep per
+  // 30 s (ref, never persisted). No time advance, no auto-save, no toast.
+  useEffect(() => {
+    const SLEEP_DURATION_MS = 3000;
+    const SLEEP_COOLDOWN_MS = 30000;
+    const BED_RADIUS_SQ = 2 * 2;
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.repeat || (e.key !== 'e' && e.key !== 'E')) return;
+      const st = useGameStore.getState();
+      if (st.ui.interactPrompt) return;
+      if (st.gamePhase !== 'playing') return;
+      if (Date.now() - sleepCooldownRef.current < SLEEP_COOLDOWN_MS) return;
+      const [px, , pz] = st.player.position;
+      const dx = BED_POSITION[0] - px;
+      const dz = BED_POSITION[2] - pz;
+      if (dx * dx + dz * dz > BED_RADIUS_SQ) return;
+      // Commence sleep: arm the cooldown, apply the single 1.1× step through
+      // the existing cure path (0.9× remaining; it never toasts), then fade.
+      sleepCooldownRef.current = Date.now();
+      st.cureDebuffs(0.1);
+      setSleeping(true);
+      if (sleepTimeoutRef.current) clearTimeout(sleepTimeoutRef.current);
+      sleepTimeoutRef.current = setTimeout(() => {
+        sleepTimeoutRef.current = null;
+        setSleeping(false);
+      }, SLEEP_DURATION_MS);
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown);
+      if (sleepTimeoutRef.current) {
+        clearTimeout(sleepTimeoutRef.current);
+        sleepTimeoutRef.current = null;
+      }
+    };
+  }, []);
+
   // Combat polish refs
   const weaponRecoilRef = useRef(0);           // current recoil offset
   const attackCamPushRef = useRef(0);          // current camera push offset
@@ -420,8 +591,47 @@ export default function Player() {
   // Pre-allocating eliminates 6+ temporary Ray objects per frame.
   const _groundRay = useRef(new rapier.Ray(_groundRayOrigin, _groundRayDir)).current;
   const _camRay = useRef(new rapier.Ray(new THREE.Vector3(), new THREE.Vector3())).current;
+  // M2D4 #2 — scratch ray for Holy Tele's wall-blocking forward cast.
+  const _afsRay = useRef(new rapier.Ray(new THREE.Vector3(), new THREE.Vector3(0, 0, 1))).current;
   // Reusable position tuple for store updates (avoids a new array every frame)
   const _posTuple = useRef<[number, number, number]>([0, 0, 0]).current;
+
+  // M2D2 #1 — transient debuff-wiring state. Neither is persisted.
+  //   • aimJitterRef: per-frame accumulated aim drift (deg), clamped to
+  //     ±aimJitterDeg and cleared to 0 on any frame the aggregate reads 0.
+  //   • randomMoveRef: active movement substitution (heading + remaining
+  //     seconds), null whenever no substitution is running.
+  const aimJitterRef = useRef<number>(0);
+  const randomMoveRef = useRef<{ remainingSec: number; angle: number } | null>(null);
+  const randomMoveSecondAccumRef = useRef(0);
+  // M2D2 #1 — Intoxicated interval split: seconds accumulated while an
+  // intoxicated curse is active. One roll per 5 s; reset to 0 the moment no
+  // intoxicated instance is active (so it never carries over between curses).
+  const intoxicatedIntervalRef = useRef<number>(0);
+
+  /** M2D2 #1 — rotate a fire direction by the aggregated aim-jitter angle
+   *  around world up (Y). The rotation is skipped entirely when the total
+   *  angle is 0, so an un-cursed shot fires the byte-identical pre-debuff
+   *  direction (no cos/sin call, no floating-point drift). */
+  const applyAimJitter = (dir: THREE.Vector3, deg: number) => {
+    let jitterDeg = 0;
+    if (deg > 0) {
+      if (AIM_JITTER_MODE === 'once_per_shot' || AIM_JITTER_MODE === 'both') {
+        jitterDeg += (Math.random() * 2 - 1) * deg;
+      }
+      if (AIM_JITTER_MODE === 'per_frame' || AIM_JITTER_MODE === 'both') {
+        jitterDeg += aimJitterRef.current;
+      }
+    }
+    const jitterRad = (jitterDeg * Math.PI) / 180;
+    if (jitterRad === 0) return;
+    const jitterCos = Math.cos(jitterRad);
+    const jitterSin = Math.sin(jitterRad);
+    const dx = dir.x;
+    const dz = dir.z;
+    dir.x = dx * jitterCos - dz * jitterSin;
+    dir.z = dx * jitterSin + dz * jitterCos;
+  };
 
   // M1887 basic/skill shot: cone hit test from the player facing at gun range.
   // Damage per pellet scaled by multiplier; `stage` drives enemy stagger.
@@ -431,6 +641,9 @@ export default function Player() {
     _v2.set(t.x, t.y + 1.2, t.z);
     const rotY = playerMeshRef.current ? playerMeshRef.current.rotation.y : 0;
     _v3.set(Math.sin(rotY), 0, Math.cos(rotY));
+    // M2D2 #1 — jitter the cone axis; the per-pellet spreadCos test below is
+    // unchanged, so the debuff stacks on top of the existing spread.
+    applyAimJitter(_v3, aggregateMagnitudes(useGameStore.getState().player.debuffs).aimJitterDeg);
     const dmg = M1887_CONFIG.damagePerPellet * M1887_CONFIG.pellets * multiplier;
     let hitAny = false;
     for (const target of enemyTargets.values()) {
@@ -479,6 +692,10 @@ export default function Player() {
     if (!rigidBodyRef.current || !playerMeshRef.current) return;
     playerRigidBodyRef.current = rigidBodyRef.current;
 
+    // M2D2 #1 — expire world drops (60 min) once per frame. O(n) with n small;
+    // the action returns early when nothing changed.
+    useGameStore.getState().tickWorldDrops(Date.now());
+
     // Respawn relocation. This must be observed HERE, above the blocking
     // early-return below: while the death overlay is up that branch returns
     // before reaching the ref update, so the overlay's true→false transition
@@ -487,7 +704,13 @@ export default function Player() {
     // position write was overwritten by the body on the next frame.
     const deathOverlay = useGameStore.getState().ui.deathOverlay;
     if (prevDeathOverlayRef.current && !deathOverlay) {
-      const cp = useGameStore.getState().player.checkpointPos;
+      // M2D4 #1 — inside the dungeon, respawn at the last checkpoint ROOM's
+      // entry, not the main-world checkpoint. Outside the dungeon the existing
+      // checkpoint behaviour is untouched.
+      const respawnState = useGameStore.getState().player;
+      const cp = respawnState.dungeonRoom > 0
+        ? dungeonRoomEntryWorld(respawnState.dungeonCheckpointRoom > 0 ? respawnState.dungeonCheckpointRoom : 1)
+        : respawnState.checkpointPos;
       rigidBodyRef.current.setTranslation({ x: cp[0], y: cp[1], z: cp[2] }, true);
       rigidBodyRef.current.setLinvel({ x: 0, y: 0, z: 0 }, true);
     }
@@ -536,7 +759,10 @@ export default function Player() {
     const uiState = useGameStore.getState().ui;
     const hudEditMode = useGameStore.getState().hudEditMode;
     const activeDialogue = useGameStore.getState().activeDialogue;
-    if (uiState.showSettings || uiState.showInventory || uiState.showQuestLog || uiState.mapOpen || hudEditMode || activeDialogue || uiState.deathOverlay) {
+    // M2D4 #1 — a dungeon fade / bossroom load ignores all gameplay input:
+    // the block below zeroes velocity and cancels attacks, dodges and skills.
+    const dungeonEntering = useGameStore.getState().player.dungeonEntering;
+    if (uiState.showSettings || uiState.showInventory || uiState.showQuestLog || uiState.mapOpen || hudEditMode || activeDialogue || uiState.deathOverlay || dungeonEntering) {
       // Zero out any residual velocity so the player doesn't drift (also
       // cancels an in-progress Fatamorgana dash if the map/modal opens mid-dash).
       dashTimerRef.current = 0;
@@ -589,6 +815,11 @@ export default function Player() {
       const blockedSel = blockedHotbar.slots[blockedHotbar.selectedSlot];
       if (blockedSel === 'm1887') {
         ['skill1', 'skill2'].forEach((key, i) => { prevGunSkillInputRefs.current[key] = blockedSkillKeys[i]; });
+      } else if (blockedSel === 'all_for_staff') {
+        ['skill1', 'skill2', 'skill3', 'skill4', 'skill5'].forEach((key, i) => {
+          const held = [blockedKeys.skill1 || blockedInputs.skill1, blockedKeys.skill2 || blockedInputs.skill2, blockedKeys.skill3 || blockedInputs.skill3, blockedKeys.skill4 || blockedInputs.skill4, blockedKeys.skill5 || blockedInputs.skill5][i];
+          prevAfsSkillInputRefs.current[key] = held;
+        });
       } else if (blockedSel === 'resonance_core') {
         ['skill1', 'skill2', 'skill3', 'skill4', 'skill5'].forEach((key, i) => {
           const held = [blockedKeys.skill1 || blockedInputs.skill1, blockedKeys.skill2 || blockedInputs.skill2, blockedKeys.skill3 || blockedInputs.skill3, blockedKeys.skill4 || blockedInputs.skill4, blockedKeys.skill5 || blockedInputs.skill5][i];
@@ -607,6 +838,72 @@ export default function Player() {
       }
       return;
     }
+
+    // ── M2D1 #2 — debuff tick (at most once per frame) ──────────────
+    // Expiry runs first so a curse that ends this frame contributes nothing
+    // to the drain applied below. This same aggregate is reused by the melee
+    // swing and ranged fire-interval sites; aim jitter and random movement
+    // remain unwired this session.
+    const debuffStore = useGameStore.getState();
+    debuffStore.tickDebuffs(delta);
+    const debuffAgg = aggregateMagnitudes(useGameStore.getState().player.debuffs);
+    // M2D2 #1 — aim jitter accumulation. A zero aggregate clears the ref so an
+    // un-cursed frame leaves no residual drift; otherwise a small random step
+    // accumulates and is clamped to ±deg.
+    {
+      const jitterDeg = debuffAgg.aimJitterDeg;
+      if (jitterDeg <= 0) {
+        aimJitterRef.current = 0;
+      } else if (AIM_JITTER_MODE === 'per_frame' || AIM_JITTER_MODE === 'both') {
+        const step = (Math.random() * 2 - 1) * jitterDeg * 0.1;
+        aimJitterRef.current = Math.max(-jitterDeg, Math.min(jitterDeg, aimJitterRef.current + step));
+      }
+    }
+    if (debuffAgg.hpPerSec > 0) {
+      const currentHealth = useGameStore.getState().player.health;
+      if (currentHealth > 0) {
+        const drained = currentHealth - debuffAgg.hpPerSec * delta;
+        if (drained <= 0) {
+          // Lethal drain: hand the killing blow to the authoritative damage
+          // funnel so the existing death path (death overlay + scheduled
+          // respawn) runs exactly as it does for an enemy hit instead of
+          // being duplicated here.
+          debuffStore.damagePlayer(Math.ceil(currentHealth));
+        } else {
+          debuffStore.setPlayerHealth(drained);
+        }
+      }
+    }
+    if (debuffAgg.staminaPerSec > 0) {
+      const currentStamina = useGameStore.getState().player.stamina;
+      debuffStore.setPlayerStamina(currentStamina - debuffAgg.staminaPerSec * delta);
+    }
+
+    // M2D2 #1 — Intoxicated interval split. The debuff's per-frame random-factor
+    // roll above is left untouched; this is an ADDITIONAL, slower roll: one
+    // chance every 5 s of an ACTIVE intoxicated curse, and on a hit a 2.5 s
+    // movement substitution through the same randomMoveRef mechanism the
+    // movement write already consumes. The accumulator starts only once the
+    // curse is active, so applying it never rolls immediately.
+    const intoxicatedActive = useGameStore
+      .getState()
+      .player.debuffs.some((d) => d.type === 'intoxicated');
+    if (intoxicatedActive) {
+      intoxicatedIntervalRef.current += delta;
+      if (intoxicatedIntervalRef.current >= 5) {
+        intoxicatedIntervalRef.current = 0;
+        if (Math.random() < 0.5) {
+          randomMoveRef.current = { remainingSec: 2.5, angle: Math.random() * Math.PI * 2 };
+        }
+      }
+    } else {
+      intoxicatedIntervalRef.current = 0;
+    }
+
+    // M2D2 #1 — equipped-jewelry bonuses, derived once per frame and reused by
+    // the damage, swing-duration and fire-interval sites below. Neutral (1.0)
+    // with nothing equipped, so every site stays byte-identical to before.
+    const jewelryBonuses = useGameStore.getState().getJewelryBonuses();
 
     // Tick Passive Regeneration (Health/Stamina) and Combat Recovery
     useGameStore.getState().tickRegenerationAndCombat(delta);
@@ -635,6 +932,12 @@ export default function Player() {
         arc.rotation.x = -Math.PI / 2;
         g.add(arc);
         g.add(new THREE.Mesh(waveEdgeGeo, waveEdgeMat));
+      } else if ((inst.skill as TintedStaffSkill).tint === 'purple') {
+        // All For Staff — purple orb.
+        g.add(new THREE.Mesh(afsOrbGeo, afsOrbMat));
+      } else if ((inst.skill as TintedStaffSkill).tint === 'pulse') {
+        // All For Staff — Pulsar orb (scale-pulsed in the transform sync).
+        g.add(new THREE.Mesh(afsPulseGeo, afsPulseMat));
       } else if (inst.visualId === 'waterbullet') {
         // Waterbullet: small fast droplet with a faint tracer.
         g.add(new THREE.Mesh(bulletOrbGeo, bulletOrbMat));
@@ -657,6 +960,9 @@ export default function Player() {
       if (inst.skill.kind === 'wave') {
         // Wave pitch + gentle spin for the compressed-water read.
         group.rotation.x = Math.sin(inst.age * 14) * 0.2;
+      } else if ((inst.skill as TintedStaffSkill).tint === 'pulse') {
+        // Pulsar: a steady in-place pulse so the orb reads as "pulsing".
+        group.scale.setScalar(1 + 0.25 * Math.sin(inst.age * 18));
       }
     }
 
@@ -1009,11 +1315,131 @@ export default function Player() {
     const selectedWeapon = hotbar.slots[hotbar.selectedSlot];
     // Archetype is authoritative gameplay state: a Fighter cannot cast even if
     // a Water Staff somehow occupies the slot (e.g. saved layout).
+    const staffId = hotbar.slots[hotbar.selectedSlot];
     const staffEquipped =
-      hotbar.slots[hotbar.selectedSlot] === 'water_staff' &&
+      (staffId === 'water_staff' || staffId === 'all_for_staff') &&
       useGameStore.getState().player.archetype === 'mage';
 
-    if (staffEquipped) {
+    if (staffEquipped && staffId === 'all_for_staff') {
+      // ── M2D4 #2 — ALL FOR STAFF (Z/X/C/V/F + M1) ────────────────────────
+      const afsSt = useGameStore.getState();
+      const afsCds = afsCooldownsRef.current;
+      for (const { skill } of AFS_SKILL_EDGES) {
+        if (afsCds[skill.id] === undefined) afsCds[skill.id] = 0;
+      }
+      for (const id of Object.keys(afsCds)) {
+        afsCds[id] = Math.max(0, afsCds[id] - effectiveDelta);
+      }
+
+      // M1 — default attack: 10 damage at RoF 2/s (continuous while held).
+      afsM1TimerRef.current = Math.max(0, afsM1TimerRef.current - effectiveDelta);
+      if (attackInput && !isDodgingRef.current && afsM1TimerRef.current <= 0) {
+        afsM1TimerRef.current = AFS_M1_INTERVAL;
+        castAnimRef.current = 1;
+        staffTrailAlphaRef.current = 1;
+        _v1.set(translation.x, translation.y + 1.2, translation.z);
+        const m1RotY = playerMeshRef.current.rotation.y;
+        _v3.set(Math.sin(m1RotY), 0, Math.cos(m1RotY));
+        applyAimJitter(_v3, debuffAgg.aimJitterDeg);
+        if (spawnSpell(AFS_M1_SPELL, _v1, _v3)) grantM1Mastery(selectedWeapon);
+      }
+
+      const afsEdges = AFS_SKILL_EDGES;
+      afsEdges[0].pressed = keySkill1 || storeSkill1; // Z
+      afsEdges[1].pressed = keySkill2 || storeSkill2; // X
+      afsEdges[2].pressed = keySkill3 || storeSkill3; // C
+      afsEdges[3].pressed = keySkill4 || storeSkill4; // V
+      afsEdges[4].pressed = keySkill5 || storeSkill5; // F
+      for (const { key, pressed, skill } of afsEdges) {
+        const was = prevAfsSkillInputRefs.current[key] ?? false;
+        prevAfsSkillInputRefs.current[key] = pressed;
+        if (pressed && !was && !isDodgingRef.current && afsCds[skill.id] <= 0) {
+          // Mastery gate: skillSlotAllowed wraps isSkillUnlockedForWeapon.
+          if (!skillSlotAllowed(selectedWeapon, SKILL_SLOT_BY_ID[skill.id])) continue;
+          afsCds[skill.id] = skill.cooldown;
+          castAnimRef.current = 1;
+          staffTrailAlphaRef.current = 1;
+          afsSt.reportSkillFired(skill.id);
+          grantSkillMastery(selectedWeapon);
+          _v1.set(translation.x, translation.y + 1.2, translation.z);
+          const rotY = playerMeshRef.current.rotation.y;
+          _v3.set(Math.sin(rotY), 0, Math.cos(rotY));
+          applyAimJitter(_v3, debuffAgg.aimJitterDeg);
+
+          if (skill.id === 'destructor_purple') {
+            // Z — straight purple projectile.
+            spawnSpell(AFS_DESTRUCTOR_SPELL, _v1, _v3);
+          } else if (skill.id === 'pulsar') {
+            // X — pulsing projectile; the 50 damage is dealt twice (see below).
+            spawnSpell(AFS_PULSAR_SPELL, _v1, _v3);
+            afsPulsarDirRef.current.copy(_v3);
+            afsPulsarRepeatRef.current = 0.25;
+          } else if (skill.id === 'imperium_glaciale') {
+            // C — AOE freeze: 75 damage + a 2 s stun within 5 m of a point 8 m
+            // ahead. Freeze duration is a placeholder (brief leaves it open).
+            const center = _v4.copy(_v1).addScaledVector(_v3, 8);
+            center.y = translation.y;
+            enemyTargets.forEach((target) => {
+              const tp = target.getPosition();
+              if (Math.hypot(tp.x - center.x, tp.z - center.z) <= 5) {
+                if (target.takeDamage(skill.damage, center, 1)) applyStun(target.id, 2);
+              }
+            });
+          } else if (skill.id === 'hollow_cryfremag') {
+            // V — forward beam: 150 damage in a 20 m corridor, then launch the
+            // player. Beam width (1.6 m) is a placeholder.
+            enemyTargets.forEach((target) => {
+              const tp = target.getPosition();
+              const dx = tp.x - translation.x;
+              const dz = tp.z - translation.z;
+              const along = dx * _v3.x + dz * _v3.z;
+              const perp = Math.hypot(dx - along * _v3.x, dz - along * _v3.z);
+              if (along > 0 && along <= 20 && perp <= 1.6) target.takeDamage(skill.damage, _v1, 1);
+            });
+            if (rigidBodyRef.current) {
+              rigidBodyRef.current.applyImpulse({ x: _v3.x * 6, y: 12, z: _v3.z * 6 }, true);
+            }
+          } else if (skill.id === 'holy_tele') {
+            // F — Holy Tele. click-to-aim is NOT supported by this build, so
+            // the documented fallback applies: 20 m ahead along facing.
+            // Wall-blocked by a forward raycast and never beyond 50 m.
+            _v3.y = 0;
+            if (_v3.lengthSq() > 0.0001) {
+              _v3.normalize();
+              _afsRay.origin = _v1;
+              _afsRay.dir = _v3;
+              let dist = 20;
+              const hit = world.castRay(_afsRay, 50, true, undefined, undefined, playerCollider, playerBody);
+              if (hit !== null && hit.timeOfImpact < dist) dist = Math.max(0.5, hit.timeOfImpact - 0.4);
+              const dest: [number, number, number] = [
+                translation.x + _v3.x * dist,
+                translation.y,
+                translation.z + _v3.z * dist,
+              ];
+              if (rigidBodyRef.current) {
+                rigidBodyRef.current.setTranslation({ x: dest[0], y: dest[1], z: dest[2] }, true);
+                rigidBodyRef.current.setLinvel({ x: 0, y: 0, z: 0 }, true);
+              }
+              setPlayerPosition(dest);
+            }
+          }
+        }
+        // Keep the skill bar cooldown readout in sync with actual gameplay.
+        if (afsCds[skill.id] > 0 || afsSt.skillState.cooldowns[skill.id] > 0) {
+          afsSt.reportSkillCooldown(skill.id, afsCds[skill.id]);
+        }
+      }
+
+      // Pulsar second pulse — the projectile's 50 damage is dealt twice.
+      if (afsPulsarRepeatRef.current > 0) {
+        afsPulsarRepeatRef.current -= effectiveDelta;
+        if (afsPulsarRepeatRef.current <= 0) {
+          afsPulsarRepeatRef.current = 0;
+          _v1.set(translation.x, translation.y + 1.2, translation.z);
+          spawnSpell(AFS_PULSAR_SPELL, _v1, afsPulsarDirRef.current);
+        }
+      }
+    } else if (staffEquipped) {
       // Spell skills fire on the input edge only (held input cannot spam).
       // Module-level edge table — avoids a per-frame array/object allocation.
       const skillEdges = STAFF_SKILL_EDGES;
@@ -1037,6 +1463,7 @@ export default function Player() {
           const rotY = playerMeshRef.current.rotation.y;
 
           _v3.set(Math.sin(rotY), 0, Math.cos(rotY));
+          applyAimJitter(_v3, debuffAgg.aimJitterDeg);
           spawnSpell(skill, _v1, _v3);
         }
         // Keep the skill bar cooldown readout in sync with actual gameplay.
@@ -1048,6 +1475,7 @@ export default function Player() {
       // Equipment transitions reset skill edges so re-equipping mid-press
       // cannot fire a stale cast.
       prevSkillInputRefs.current = {};
+      prevAfsSkillInputRefs.current = {};
     }
 
     // Tick spell simulation every frame (regardless of blocking later in the
@@ -1263,7 +1691,10 @@ export default function Player() {
       if (attackInput && !isDodgingRef.current && gunFireTimerRef.current <= 0) {
         if (gunAmmoRef.current > 0) {
           gunAmmoRef.current -= 1;
-          gunFireTimerRef.current = 1 / M1887_CONFIG.shotsPerSecond;
+          // M2D1 #2 — a fatigue curse widens the per-shot fire interval only;
+          // the reload below is untouched. Non-positive reads as neutral.
+          const debuffFireRateMult = debuffAgg.rateOfFireMult > 0 ? debuffAgg.rateOfFireMult : 1;
+          gunFireTimerRef.current = (1 / M1887_CONFIG.shotsPerSecond) * (1 / debuffFireRateMult) * (1 / jewelryBonuses.rateOfFireMult);
           fireM1887Shot(1.0, 0);
           st.reportSkillFired('__gun_basic');
           st.reportSkillCooldown('__gun_basic', gunFireTimerRef.current);
@@ -1516,6 +1947,7 @@ export default function Player() {
       _v2.set(t.x, t.y + 1.2, t.z);
       const rotY = (playerMeshRef.current ? playerMeshRef.current.rotation.y : 0) + (degOffset * Math.PI) / 180;
       _v3.set(Math.sin(rotY), 0, Math.cos(rotY));
+      applyAimJitter(_v3, debuffAgg.aimJitterDeg);
       return spawnArrow(_v2, _v3.x, _v3.z, baseDamage, dmgPerMetre, CROSSBOW_CONFIG.arrowLifetime, dmgPerMetre > 0) !== null;
     };
 
@@ -1550,7 +1982,10 @@ export default function Player() {
         if (fireCrossbowArrow(0, CROSSBOW_CONFIG.damage * crossbowStreakMultiplier(crossbowStreakRef.current), 0)) {
           crossbowAmmoRef.current -= 1;
           crossbowTrailAlphaRef.current = 1;
-          crossbowFireTimerRef.current = crossbowClick ? CROSSBOW_CONFIG.fireIntervalClick : CROSSBOW_CONFIG.fireIntervalHold;
+          // M2D1 #2 — the same fatigue factor widens both the click and the
+          // hold interval; the reload below supersedes and stays untouched.
+          const debuffCrossbowRateMult = debuffAgg.rateOfFireMult > 0 ? debuffAgg.rateOfFireMult : 1;
+          crossbowFireTimerRef.current = (crossbowClick ? CROSSBOW_CONFIG.fireIntervalClick : CROSSBOW_CONFIG.fireIntervalHold) * (1 / debuffCrossbowRateMult) * (1 / jewelryBonuses.rateOfFireMult);
           if (crossbowAmmoRef.current <= 0) {
             // Empty — start the reload; it supersedes the shot interval.
             crossbowFireTimerRef.current = CROSSBOW_CONFIG.reloadSeconds;
@@ -1671,7 +2106,11 @@ export default function Player() {
           attackComboStageRef.current = comboStage;
           // Curse of Hell attack-speed bonus shortens the swing duration.
           const buffMult = daggerActive && curseOfHellTimerRef.current > 0 ? 1 / CURSE_OF_HELL.attackSpeedMultiplier : 1;
-          attackTimerRef.current = CC.attackDuration * buffMult;
+          // M2D1 #2 — a slowness/weakness/fatigue curse extends the swing
+          // duration (never the cooldown between attacks). A non-positive
+          // aggregate is treated as neutral so the division can never NaN.
+          const debuffAttackSpeedMult = debuffAgg.attackSpeedMult > 0 ? debuffAgg.attackSpeedMult : 1;
+          attackTimerRef.current = CC.attackDuration * buffMult * (1 / debuffAttackSpeedMult) * (1 / jewelryBonuses.attackSpeedMult);
           hitEnemiesThisSwingRef.current.clear();
           attackCamPushRef.current = CC.attackCameraPush;
           trailAlphaRef.current = 1;
@@ -1693,7 +2132,12 @@ export default function Player() {
         const comboStage = useGameStore.getState().triggerPlayerAttack();
         if (comboStage > 0) {
           attackComboStageRef.current = comboStage;
-          attackTimerRef.current = CC.attackDuration;
+          // M2D1 #2 — the buffered (chained) swing start uses the same debuff
+          // swing-duration factor as the primary site above. The Curse of Hell
+          // attack-speed bonus is deliberately NOT applied here: it never
+          // covered this path, and adding it would change existing behaviour.
+          const debuffAttackSpeedMult = debuffAgg.attackSpeedMult > 0 ? debuffAgg.attackSpeedMult : 1;
+          attackTimerRef.current = CC.attackDuration * (1 / debuffAttackSpeedMult) * (1 / jewelryBonuses.attackSpeedMult);
           hitEnemiesThisSwingRef.current.clear();
           attackCamPushRef.current = CC.attackCameraPush;
           trailAlphaRef.current = 1;
@@ -1760,7 +2204,16 @@ export default function Player() {
         // M2D1 #1 — mastery bonus applies to OUTGOING WEAPON DAMAGE ONLY.
         // Deliberately NOT applied to attack speed, rate of fire, sprint
         // stamina drain, or the dodge stamina cost.
-        damage = Math.round(damage * statBonusMultiplier(masteryLevelOf(selectedWeapon)));
+        // M2D1 #2 — active curses scale outgoing melee damage: weakness lowers
+        // it (damageOutMult) while crazy/intoxicated raise it (dmgBoostMult).
+        const debuffDamage = aggregateMagnitudes(useGameStore.getState().player.debuffs);
+        damage = Math.round(
+          damage
+            * statBonusMultiplier(masteryLevelOf(selectedWeapon))
+            * jewelryBonuses.damageMult
+            * debuffDamage.damageOutMult
+            * debuffDamage.dmgBoostMult
+        );
 
         // Query enemy targets
         // E1b: the held melee weapon's impact row, resolved once for the swing.
@@ -1926,13 +2379,25 @@ export default function Player() {
         }
 
         const slowFactor = storeState.player.slowFactor ?? 1.0;
-        const currentSpeed = (canSprint ? SPEED * SPRINT_MULT : SPEED) * slowFactor;
+        // M2D1 #2 — slowness/weakness scale horizontal displacement (both the
+        // X and Z targets below derive from currentSpeed).
+        const debuffMoveMult = aggregateMagnitudes(storeState.player.debuffs).moveSpeedMult;
+        const currentSpeed = (canSprint ? SPEED * SPRINT_MULT : SPEED) * slowFactor * debuffMoveMult;
         
         // Attack slows movement slightly
         const speedMult = attackTimerRef.current > 0 ? CC.attackMoveSlow : 1.0;
         
-        const desiredVx = (_v1.x * Math.cos(cameraAngle) + _v1.z * Math.sin(cameraAngle)) * currentSpeed * speedMult;
-        const desiredVz = (-_v1.x * Math.sin(cameraAngle) + _v1.z * Math.cos(cameraAngle)) * currentSpeed * speedMult;
+        let desiredVx = (_v1.x * Math.cos(cameraAngle) + _v1.z * Math.sin(cameraAngle)) * currentSpeed * speedMult;
+        let desiredVz = (-_v1.x * Math.sin(cameraAngle) + _v1.z * Math.cos(cameraAngle)) * currentSpeed * speedMult;
+
+        // M2D2 #1 — random move. While a substitution is active it replaces
+        // only the direction with a fixed unit heading; the speed multiplier
+        // (sprint/slow/attack) is untouched. null ⇒ byte-identical movement.
+        const randomMove = randomMoveRef.current;
+        if (randomMove) {
+          desiredVx = Math.sin(randomMove.angle) * currentSpeed * speedMult;
+          desiredVz = Math.cos(randomMove.angle) * currentSpeed * speedMult;
+        }
 
         // Frame-rate-independent acceleration toward desired velocity.
         // Air control is reduced to prevent unrealistic instant turns.
@@ -1973,6 +2438,43 @@ export default function Player() {
     // APPLY COMBINED VELOCITY (ONCE PER FRAME)
     // -------------------------------------------------------------
     rigidBodyRef.current.setLinvel({ x: targetVx, y: targetVy, z: targetVz }, true);
+
+    // -------------------------------------------------------------
+    // M2D2 #1 — RANDOM MOVE (intoxicated / fatigue tier 5). The roll runs
+    // once per frame ('per_frame') or once per whole second ('per_second');
+    // a success pins a heading for `durationSec`, which the movement write
+    // above substitutes on the following frames. A zero aggregate never
+    // rolls, so the movement write stays byte-identical.
+    // -------------------------------------------------------------
+    if (randomMoveRef.current) {
+      randomMoveRef.current.remainingSec -= delta;
+      if (randomMoveRef.current.remainingSec <= 0) randomMoveRef.current = null;
+    }
+    let randomMoveRollNow = false;
+    if (RANDOM_MOVE_MODE.trigger === 'per_frame') {
+      randomMoveRollNow = true;
+    } else {
+      // 'per_second' — dead code while the operator constant stays
+      // 'per_frame'; kept so switching the constant works unchanged.
+      randomMoveSecondAccumRef.current += delta;
+      if (randomMoveSecondAccumRef.current >= 1) {
+        randomMoveSecondAccumRef.current -= 1;
+        randomMoveRollNow = true;
+      }
+    }
+    if (randomMoveRollNow && !randomMoveRef.current && debuffAgg.randomMovePct > 0 && Math.random() < debuffAgg.randomMovePct) {
+      const arc = RANDOM_MOVE_MODE.arcDeg;
+      let angle: number;
+      if (arc === 'full_360') {
+        angle = Math.random() * Math.PI * 2;
+      } else {
+        // Named arc: centre the substitution on the heading the movement
+        // write just computed (the same vector it turned into velocity).
+        const half = (arc * Math.PI) / 180 / 2;
+        angle = Math.atan2(targetVx, targetVz) + (Math.random() * 2 - 1) * half;
+      }
+      randomMoveRef.current = { remainingSec: RANDOM_MOVE_MODE.durationSec, angle };
+    }
 
     // -------------------------------------------------------------
     // 5b. HEAD BOB, SPRINT FOV, FOOTSTEPS
@@ -2323,6 +2825,7 @@ export default function Player() {
   });
 
   return (
+    <>
     <RigidBody
       ref={rigidBodyRef}
       colliders={false}
@@ -2677,5 +3180,13 @@ export default function Player() {
         <meshBasicMaterial color="#a78bfa" transparent opacity={0} depthWrite={false} side={THREE.DoubleSide} />
       </mesh>
     </RigidBody>
+    {/* M2D2 #1 — sleep fade: a 3 s full-screen black overlay, pointer-events
+        off so it never eats gameplay input. */}
+    {sleeping && (
+      <Html fullscreen style={{ pointerEvents: 'none' }}>
+        <div className="fixed inset-0 bg-black" />
+      </Html>
+    )}
+    </>
   );
 }

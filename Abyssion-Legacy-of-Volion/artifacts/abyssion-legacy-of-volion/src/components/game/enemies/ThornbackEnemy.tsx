@@ -19,6 +19,7 @@ import * as THREE from 'three';
 import BaseEnemy, { EnemyContext } from './BaseEnemy';
 import { EnemyConfig, EnemyProps } from './types';
 import { useGameStore } from '@/lib/store';
+import { rollEnemyDebuff } from '@/lib/debuffs';
 import { playerRigidBodyRef } from '../Player';
 import { guardedPlayerImpulse } from '@/lib/playerImpulse';
 
@@ -136,6 +137,17 @@ export default function ThornbackEnemy({ position, name, arenaBounds }: EnemyPro
       if (!chargeHitRef.current && distToPlayer <= CHARGE.hitRadius) {
         chargeHitRef.current = true;
         const hitTaken = useGameStore.getState().damagePlayer(14);
+        // M2D1 #2 — a landed charge may apply this enemy's curse.
+        if (hitTaken) {
+          const debuffRoll = rollEnemyDebuff(config.name, Math.random);
+          if (debuffRoll) {
+            useGameStore.getState().applyDebuff(
+              debuffRoll.type,
+              debuffRoll.tier,
+              debuffRoll.durationSec
+            );
+          }
+        }
         if (hitTaken && playerRigidBodyRef.current) {
           guardedPlayerImpulse({ x: chargeDirRef.current.x * 6, y: 2.5, z: chargeDirRef.current.z * 6});
         }

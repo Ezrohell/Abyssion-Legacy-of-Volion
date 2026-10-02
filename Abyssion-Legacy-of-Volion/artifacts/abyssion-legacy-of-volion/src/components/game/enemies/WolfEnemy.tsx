@@ -5,6 +5,7 @@ import * as THREE from 'three';
 import BaseEnemy, { EnemyContext } from './BaseEnemy';
 import { EnemyConfig, EnemyProps, requestAttackerToken, releaseAttackerToken } from './types';
 import { useGameStore } from '@/lib/store';
+import { rollEnemyDebuff } from '@/lib/debuffs';
 import { playerRigidBodyRef } from '../Player';
 import { guardedPlayerImpulse } from '@/lib/playerImpulse';
 
@@ -117,6 +118,17 @@ export default function WolfEnemy({ position, name, arenaBounds }: EnemyProps) {
         // Hit check
         if (distToPlayer <= 2.2) {
           const hitTaken = useGameStore.getState().damagePlayer(config.damage);
+          // M2D1 #2 — a landed lunge may apply this enemy's curse.
+          if (hitTaken) {
+            const debuffRoll = rollEnemyDebuff(config.name, Math.random);
+            if (debuffRoll) {
+              useGameStore.getState().applyDebuff(
+                debuffRoll.type,
+                debuffRoll.tier,
+                debuffRoll.durationSec
+              );
+            }
+          }
           if (hitTaken && playerRigidBodyRef.current) {
             guardedPlayerImpulse({ x: lungeDirRef.current.x * config.knockback, y: 3, z: lungeDirRef.current.z * config.knockback});
           }

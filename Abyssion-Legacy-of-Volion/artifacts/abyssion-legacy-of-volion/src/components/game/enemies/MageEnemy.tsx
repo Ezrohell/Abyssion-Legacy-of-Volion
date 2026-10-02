@@ -6,6 +6,7 @@ import * as THREE from 'three';
 import BaseEnemy, { EnemyContext } from './BaseEnemy';
 import { EnemyConfig, EnemyProps, requestAttackerToken, releaseAttackerToken, hasAttackerToken } from './types';
 import { useGameStore } from '@/lib/store';
+import { rollEnemyDebuff } from '@/lib/debuffs';
 import { playerRigidBodyRef } from '../Player';
 import { guardedPlayerImpulse } from '@/lib/playerImpulse';
 
@@ -107,6 +108,17 @@ export default function MageEnemy({ position, name }: EnemyProps) {
 
           if (distToPlayer <= 2.8) {
             const hitTaken = useGameStore.getState().damagePlayer(config.damage);
+            // M2D1 #2 — a landed projectile detonation may apply this enemy's curse.
+            if (hitTaken) {
+              const debuffRoll = rollEnemyDebuff(config.name, Math.random);
+              if (debuffRoll) {
+                useGameStore.getState().applyDebuff(
+                  debuffRoll.type,
+                  debuffRoll.tier,
+                  debuffRoll.durationSec
+                );
+              }
+            }
             if (hitTaken && playerRigidBodyRef.current) {
               const kbDir = _kbDir.copy(playerPos).sub(p.pos).normalize();
               guardedPlayerImpulse({ x: kbDir.x * config.knockback, y: 4, z: kbDir.z * config.knockback});

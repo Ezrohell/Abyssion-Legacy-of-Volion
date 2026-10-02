@@ -1,7 +1,7 @@
 'use client';
 
 import { useGameStore } from '@/lib/store';
-import type { InventoryPanelLayout } from '@/lib/store';
+import { BACKPACK_TIER_GRID, BACKPACK_TIER_NAMES, JEWELRY_SLOT_COUNTS, type InventoryPanelLayout, type JewelrySlot } from '@/lib/store';
 import { getItem, RARITY_COLORS, ItemDef, ItemType, ArmourSlot, armourSlotOf } from '@/lib/items';
 import {
   splitStack,
@@ -20,7 +20,8 @@ import { X, Search, ChevronDown, ArrowUpDown, Package, RotateCcw, Save } from 'l
 import { Canvas } from '@react-three/fiber';
 import { weaponCategoryOf, isRangedCategory } from '@/lib/items';
 import { masteryLevelFor, skillSlotsForWeapon, WEAPON_SKILL_UNLOCK_LEVELS } from '@/lib/progression';
-import { pushToast } from '@/lib/toast';
+import { CYBERWARE_SLOTS } from '@/lib/cyberware';
+import { notifyItemDiscarded, pushToast } from '@/lib/toast';
 import * as LucideIcons from 'lucide-react';
 import { useState, useCallback, useRef, useEffect, useMemo } from 'react';
 
@@ -108,6 +109,58 @@ type IconType = React.ComponentType<{ size?: number; className?: string }>;
 
 function getIconComponent(iconName: string): IconType {
   return (LucideIcons as unknown as Record<string, IconType>)[iconName] ?? Package;
+}
+
+/** M2D1 #2 — one empty Special Slot Area placeholder (rings / necklaces /
+ *  bracelets). Presentational only: no click, no drag, no drop. Flexes down so
+ *  the 18-slot area can never overflow the equipment strip. */
+function EmptySpecialSlot({ label }: { label: string }) {
+  return (
+    <div
+      title={`Empty ${label} slot`}
+      className="flex-1 min-w-0 max-w-4 aspect-square rounded border border-dashed border-gray-700 bg-black/40"
+    />
+  );
+}
+
+/** M2D2 #1 — jewelry slot of an item def ('ring' | 'necklace' | 'bracelet'), or
+ *  null when the item is not jewelry. Armour has no jewelrySlot and is
+ *  unaffected. */
+function jewelrySlotOf(def: ItemDef | undefined): JewelrySlot | null {
+  const raw = def?.metadata?.jewelrySlot;
+  return raw === 'ring' || raw === 'necklace' || raw === 'bracelet' ? raw : null;
+}
+
+/** M2D2 #1 — one OCCUPIED Special Slot Area slot. Same slot idiom as the
+ *  inventory grid (item icon + rarity-coloured border); right-click opens the
+ *  Unequip menu. Empty slots keep rendering through EmptySpecialSlot. */
+function SpecialJewelrySlot({
+  slot,
+  jewelrySlot,
+  index,
+  onUnequip,
+}: {
+  slot: InventorySlot;
+  jewelrySlot: JewelrySlot;
+  index: number;
+  onUnequip: (e: React.MouseEvent, jewelrySlot: JewelrySlot, index: number) => void;
+}) {
+  const def = getItem(slot.itemId);
+  if (!def) return <EmptySpecialSlot label={jewelrySlot} />;
+  const Icon = getIconComponent(def.icon);
+  return (
+    <div
+      title={`${def.name} — right-click to unequip`}
+      onContextMenu={(e) => onUnequip(e, jewelrySlot, index)}
+      className="flex-1 min-w-0 max-w-4 aspect-square rounded border-2 flex items-center justify-center cursor-default"
+      style={{
+        borderColor: RARITY_COLORS[def.rarity],
+        background: 'linear-gradient(160deg, rgba(38,32,22,0.95), rgba(22,19,14,0.95))',
+      }}
+    >
+      <Icon size={12} />
+    </div>
+  );
 }
 
 /** ── P1.4 armour character preview ──────────────────────────────────
@@ -331,6 +384,11 @@ export default function InventoryModal() {
   const { ui, setShowInventory, player, setInventory, useConsumableItem } = useGameStore();
   const equipWeapon = useGameStore((s) => s.equipWeapon);
   const unequipSlot = useGameStore((s) => s.unequipSlot);
+  // M2D2 #1 — jewelry equip/unequip (per-type equipped arrays in the store).
+  const equipJewelry = useGameStore((s) => s.equipJewelry);
+  const unequipJewelry = useGameStore((s) => s.unequipJewelry);
+  // M2D2 #1 — discarded items are spawned back into the world as Rapier bodies.
+  const spawnWorldDrop = useGameStore((s) => s.spawnWorldDrop);
 
   const [draggedSlot, setDraggedSlot] = useState<{ cat: ItemType; index: number } | null>(null);
   const [dropTarget, setDropTarget] = useState<{ cat: ItemType; index: number } | null>(null);
@@ -355,8 +413,10 @@ export default function InventoryModal() {
   const [unsavedGeometry, setUnsavedGeometry] = useState(false);
   const [showDiscardConfirm, setShowDiscardConfirm] = useState(false);
   // M2 #2 C9 — right-click context menu and its discard-item confirmation.
+  // `jewelrySlot` marks a right-click on a Special Slot Area slot (M2D2 #1):
+  // such an entry renders the single Unequip action and ignores cat/index.
   const [contextMenu, setContextMenu] = useState<
-    { cat: ItemType; index: number; x: number; y: number } | null
+    { cat: ItemType; index: number; x: number; y: number; jewelrySlot?: JewelrySlot } | null
   >(null);
   const [discardTarget, setDiscardTarget] = useState<
     { cat: ItemType; index: number } | null
@@ -366,6 +426,12 @@ export default function InventoryModal() {
   // state, cleared on close, and never persisted to the store.
   const [selectedSlot, setSelectedSlot] = useState<{ cat: ItemType; index: number } | null>(null);
   const [descriptionPage, setDescriptionPage] = useState(0);
+  // M2D1 #2 — backpack panel visibility. Transient UI state, never persisted;
+  // cleared by the open effect below. Deliberately NOT a store field.
+  const [backpackOpen, setBackpackOpen] = useState(false);
+  // M2D2 #1 — cyberware panel visibility. Transient UI state, never persisted;
+  // cleared by the open effect below. Deliberately NOT a store field.
+  const [cyberwareOpen, setCyberwareOpen] = useState(false);
 
   const longPressTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const longPressFired = useRef(false);
@@ -425,6 +491,10 @@ export default function InventoryModal() {
       // M2D1 #1 — the description selection is per-open UI state too.
       setSelectedSlot(null);
       setDescriptionPage(0);
+      // M2D1 #2 — the backpack panel must not survive a close.
+      setBackpackOpen(false);
+      // M2D2 #1 — the cyberware panel must not survive a close.
+      setCyberwareOpen(false);
     }
   }, [open]);
 
@@ -569,7 +639,7 @@ export default function InventoryModal() {
           <div className="h-1.5 rounded-full overflow-hidden bg-amber-950/25">
             <div className="h-full bg-amber-700" style={{ width: `${(masteryLevel / 999) * 100}%` }} />
           </div>
-          <div className="text-xs text-amber-950/80">{masteryLevel} / 999</div>
+          <div className="text-xs text-amber-950/80">{`Lvl ${masteryLevel}${masteryLevel >= 999 ? ' (MXL)' : ''}`}</div>
         </div>
       ),
     });
@@ -641,11 +711,18 @@ export default function InventoryModal() {
         useConsumableItem(def.name);
         return;
       }
+      // M2D2 #1 — jewelry equips into its own per-type equipped array instead
+      // of the hotbar; a full array is a silent no-op this session.
+      const jewelrySlot = jewelrySlotOf(def);
+      if (jewelrySlot) {
+        equipJewelry(jewelrySlot, def.id);
+        return;
+      }
       // Weapons (and shields) equip through the authoritative hotbar path;
       // equipWeapon enforces archetype usability and fails closed.
       equipWeapon(def.id);
     },
-    [useConsumableItem, equipWeapon]
+    [useConsumableItem, equipWeapon, equipJewelry]
   );
 
   const openSplitDialog = useCallback(
@@ -750,6 +827,19 @@ export default function InventoryModal() {
       index,
       x: e.clientX,
       y: e.clientY,
+    });
+  };
+
+  /** M2D2 #1 — right-click on an equipped jewelry slot opens the Unequip menu. */
+  const handleJewelryContextMenu = (e: React.MouseEvent, jewelrySlot: JewelrySlot, index: number) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setContextMenu({
+      cat: 'equipment',
+      index,
+      x: e.clientX,
+      y: e.clientY,
+      jewelrySlot,
     });
   };
 
@@ -1122,6 +1212,34 @@ export default function InventoryModal() {
                 </div>
               );
             })}
+            {/* M2D1 #2 — backpack panel toggle. Kept out of NAV_CATEGORIES:
+                it opens a panel, it is not a display filter. */}
+            <button
+              type="button"
+              onClick={() => setBackpackOpen((prev) => !prev)}
+              className={`flex items-center gap-2 w-full px-3 py-3 sm:py-4 rounded-lg border text-left font-bold tracking-wide transition-colors ${
+                backpackOpen
+                  ? 'bg-amber-900/60 text-amber-200 border-amber-600'
+                  : 'bg-black/40 text-gray-400 border-gray-800 hover:text-gray-200 hover:border-gray-600'
+              }`}
+            >
+              {(() => { const BackpackIcon = getIconComponent('Backpack'); return <BackpackIcon size={18} className="shrink-0" />; })()}
+              <span className="text-sm sm:text-base">Backpack</span>
+            </button>
+            {/* M2D2 #1 — cyberware panel toggle. Same reason as Backpack:
+                it opens a panel, it is not a display filter. */}
+            <button
+              type="button"
+              onClick={() => setCyberwareOpen((prev) => !prev)}
+              className={`flex items-center gap-2 w-full px-3 py-3 sm:py-4 rounded-lg border text-left font-bold tracking-wide transition-colors ${
+                cyberwareOpen
+                  ? 'bg-amber-900/60 text-amber-200 border-amber-600'
+                  : 'bg-black/40 text-gray-400 border-gray-800 hover:text-gray-200 hover:border-gray-600'
+              }`}
+            >
+              {(() => { const CyberwareIcon = getIconComponent('Cpu'); return <CyberwareIcon size={18} className="shrink-0" />; })()}
+              <span className="text-sm sm:text-base">Cyberware</span>
+            </button>
           </nav>
           </div>{/* end Col 1 */}
 
@@ -1178,9 +1296,51 @@ export default function InventoryModal() {
               })}
             </div>
           </div>
-          {/* Reserved empty area to the right of the preview — deliberately
-              unused in this session. */}
-          <div className="flex-1 min-h-0" aria-hidden />
+          {/* M2D2 #1 — Special Slot Area. Row 1: backpack + 10 rings; row 2:
+              2 necklaces + 5 bracelets (18 slots total). Occupied slots render
+              from the store's equippedRings / equippedNecklaces /
+              equippedBracelets arrays; empty ones stay placeholders. No drag,
+              no drop, no sort: click-to-equip happens from the inventory grid
+              and unequip through the right-click menu. */}
+          <div className="flex-1 min-w-0 flex flex-col justify-center gap-1">
+            <div className="flex items-center gap-0.5 w-full">
+              <div
+                title={`Backpack — ${BACKPACK_TIER_NAMES[player.backpackTier - 1]} (always equipped)`}
+                className="w-8 h-8 shrink-0 rounded border-2 border-amber-600/70 bg-amber-900/20 flex flex-col items-center justify-center gap-px"
+              >
+                {(() => { const BackpackIcon = getIconComponent('Backpack'); return <BackpackIcon size={12} className="text-amber-300" />; })()}
+                <span className="text-[6px] uppercase tracking-wide text-amber-200/80 leading-none">
+                  {BACKPACK_TIER_NAMES[player.backpackTier - 1]}
+                </span>
+              </div>
+              {Array.from({ length: JEWELRY_SLOT_COUNTS.ring }, (_, i) => {
+                const equipped = player.equippedRings?.[i] ?? null;
+                return equipped ? (
+                  <SpecialJewelrySlot key={`ring-${i}`} slot={equipped} jewelrySlot="ring" index={i} onUnequip={handleJewelryContextMenu} />
+                ) : (
+                  <EmptySpecialSlot key={`ring-${i}`} label="ring" />
+                );
+              })}
+            </div>
+            <div className="flex items-center gap-0.5 w-full">
+              {Array.from({ length: JEWELRY_SLOT_COUNTS.necklace }, (_, i) => {
+                const equipped = player.equippedNecklaces?.[i] ?? null;
+                return equipped ? (
+                  <SpecialJewelrySlot key={`necklace-${i}`} slot={equipped} jewelrySlot="necklace" index={i} onUnequip={handleJewelryContextMenu} />
+                ) : (
+                  <EmptySpecialSlot key={`necklace-${i}`} label="necklace" />
+                );
+              })}
+              {Array.from({ length: JEWELRY_SLOT_COUNTS.bracelet }, (_, i) => {
+                const equipped = player.equippedBracelets?.[i] ?? null;
+                return equipped ? (
+                  <SpecialJewelrySlot key={`bracelet-${i}`} slot={equipped} jewelrySlot="bracelet" index={i} onUnequip={handleJewelryContextMenu} />
+                ) : (
+                  <EmptySpecialSlot key={`bracelet-${i}`} label="bracelet" />
+                );
+              })}
+            </div>
+          </div>
           </div>
 
           <div className="flex flex-col flex-1 min-h-0 min-w-0">
@@ -1448,6 +1608,23 @@ export default function InventoryModal() {
                   if (slot) {
                     const result = removeItem(player.inventory, slot.itemId, slot.count);
                     setInventory(result.inv);
+                    // M2D2 #1 — a discarded item lands in the world 1 m ahead of
+                    // the player (forward = the camera's facing). Only what was
+                    // actually removed is spawned.
+                    if (result.removed > 0) {
+                      const [px, py, pz] = player.position;
+                      const angle = useGameStore.getState().inputs.cameraAngle;
+                      spawnWorldDrop(
+                        slot.itemId,
+                        result.removed,
+                        [px - Math.sin(angle), py, pz - Math.cos(angle)],
+                        'player',
+                      );
+                    }
+                    // M2D2 #1 — confirm what was actually removed. getItem is a
+                    // static definition lookup, unaffected by the write above.
+                    const discardedDef = getItem(slot.itemId);
+                    if (discardedDef) notifyItemDiscarded(discardedDef.name, slot.count);
                   }
                   setDiscardTarget(null);
                 }}
@@ -1470,6 +1647,41 @@ export default function InventoryModal() {
           above the panel; dismissed by its own full-screen backdrop, by
           Escape while focused, or by any menu action. No window listener. */}
       {contextMenu && ((cm) => {
+        // M2D2 #1 — an equipped jewelry slot offers Unequip only. The inventory
+        // branch below is untouched; cm.cat is meaningless (and unused) here.
+        const jewelrySlot = cm.jewelrySlot;
+        if (jewelrySlot) {
+          const jvw = typeof window !== 'undefined' ? window.innerWidth : 9999;
+          const jvh = typeof window !== 'undefined' ? window.innerHeight : 9999;
+          const jleft = Math.min(cm.x, jvw - 200);
+          const jtop = Math.min(cm.y, jvh - 260);
+          return (
+            <>
+              <div className="fixed inset-0 z-[70]" onPointerDown={() => setContextMenu(null)} />
+              <div
+                role="menu"
+                tabIndex={-1}
+                autoFocus
+                onKeyDown={(e) => {
+                  if (e.key === 'Escape') setContextMenu(null);
+                }}
+                className="fixed z-[71] w-[180px] bg-gray-900 border border-gray-700 rounded-lg shadow-2xl py-1 focus:outline-none"
+                style={{ left: jleft, top: jtop }}
+              >
+                <button
+                  type="button"
+                  className="w-full text-left px-3 py-1.5 text-sm text-gray-200 hover:bg-gray-700 transition-colors"
+                  onClick={() => {
+                    unequipJewelry(jewelrySlot, cm.index);
+                    setContextMenu(null);
+                  }}
+                >
+                  Unequip
+                </button>
+              </div>
+            </>
+          );
+        }
         const slot = player.inventory.categories[cm.cat]?.[cm.index];
         const def = slot ? getItem(slot.itemId) : undefined;
         if (!slot || !def) return null;
@@ -1718,6 +1930,178 @@ export default function InventoryModal() {
           </div>
         </div>
       )}
+
+      {/* M2D1 #2 — backpack panel (inline overlay, same pattern as
+          showDiscardConfirm). Reads player.backpackItems and pads the grid to
+          cols*rows from the tier — no drag, drop, sort or context menu. Escape
+          closes ONLY this panel: the outer modal's close stays locked to the X
+          button, and this card owns its own focused key handler (no window
+          listener). */}
+      {backpackOpen && (() => {
+        const grid = BACKPACK_TIER_GRID[player.backpackTier];
+        const tierName = BACKPACK_TIER_NAMES[player.backpackTier - 1];
+        const totalSlots = grid.cols * grid.rows;
+        const items = player.backpackItems;
+        return (
+          <div
+            className="absolute inset-0 z-[65] flex items-center justify-center bg-black/70 p-4"
+            onPointerDown={(e) => {
+              if (e.target === e.currentTarget) setBackpackOpen(false);
+            }}
+          >
+            <div
+              role="dialog"
+              aria-label={`Backpack — ${tierName}`}
+              tabIndex={-1}
+              autoFocus
+              onKeyDown={(e) => {
+                if (e.key === 'Escape') setBackpackOpen(false);
+              }}
+              className="bg-gray-900 border border-gray-700 rounded-xl shadow-2xl w-full max-w-lg max-h-full overflow-y-auto p-4 focus:outline-none"
+            >
+              <div className="flex items-center justify-between mb-3">
+                <h3 className="text-lg font-bold text-white">
+                  Backpack — <span className="capitalize">{tierName}</span>
+                </h3>
+                <button
+                  type="button"
+                  onClick={() => setBackpackOpen(false)}
+                  aria-label="Close backpack"
+                  className="text-gray-400 hover:text-white transition-colors"
+                >
+                  <X size={20} />
+                </button>
+              </div>
+              <div
+                className="grid gap-1.5"
+                style={{ gridTemplateColumns: `repeat(${grid.cols}, minmax(0, 1fr))` }}
+              >
+                {Array.from({ length: totalSlots }, (_, i) => {
+                  const slot = items[i] ?? null;
+                  const def = slot ? getItem(slot.itemId) : null;
+                  return (
+                    <div
+                      key={i}
+                      title={def ? def.name : 'Empty backpack slot'}
+                      className={`relative aspect-square rounded border-2 flex items-center justify-center ${
+                        def ? 'border-amber-600/70 bg-amber-900/20' : 'border-gray-700 bg-black/40 border-dashed'
+                      }`}
+                    >
+                      {def && (() => { const SlotIcon = getIconComponent(def.icon); return <SlotIcon size={16} className="text-amber-300" />; })()}
+                      {slot && slot.count > 1 && (
+                        <span className="absolute bottom-0 right-0.5 text-[9px] text-gray-300 font-bold">
+                          {slot.count}
+                        </span>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          </div>
+        );
+      })()}
+
+      {/* M2D2 #1 — cyberware panel (inline overlay, same pattern as the
+          backpack panel). Informational only: reads player.cyberware,
+          player.bytegold and player.hasBytechip and renders the 22
+          placeholder slots in a 4-column grid. No click handlers, no
+          install/uninstall UI. Escape closes ONLY this panel. */}
+      {cyberwareOpen && (() => {
+        const CircleIcon = getIconComponent('Circle');
+        return (
+          <div
+            className="absolute inset-0 z-[65] flex items-center justify-center bg-black/70 p-4"
+            onPointerDown={(e) => {
+              if (e.target === e.currentTarget) setCyberwareOpen(false);
+            }}
+          >
+            <div
+              role="dialog"
+              aria-label="Cyberware"
+              tabIndex={-1}
+              autoFocus
+              onKeyDown={(e) => {
+                if (e.key === 'Escape') setCyberwareOpen(false);
+              }}
+              className="bg-gray-900 border border-gray-700 rounded-xl shadow-2xl w-full max-w-2xl max-h-full overflow-y-auto p-4 focus:outline-none"
+            >
+              <div className="flex items-center justify-between mb-3">
+                <h3 className="text-lg font-bold text-white">Cyberware</h3>
+                <button
+                  type="button"
+                  onClick={() => setCyberwareOpen(false)}
+                  aria-label="Close cyberware"
+                  className="text-gray-400 hover:text-white transition-colors"
+                >
+                  <X size={20} />
+                </button>
+              </div>
+              <div className="flex gap-4">
+                <div className="grid grid-cols-4 gap-1.5 flex-1">
+                  {CYBERWARE_SLOTS.map((def) => (
+                    <div
+                      key={def.id}
+                      className="relative aspect-square rounded border-2 border-gray-700 bg-black/40 border-dashed flex flex-col items-center justify-center gap-1 p-1"
+                    >
+                      <CircleIcon size={18} className="text-gray-500" />
+                      <span className="text-[10px] leading-tight text-gray-400 text-center break-words">
+                        {def.label}
+                      </span>
+                      {def.paired && (() => {
+                        const entry = player.cyberware[def.id];
+                        const pair = entry && 'L' in entry ? entry : null;
+                        const left = !!pair?.L.installed;
+                        const right = !!pair?.R.installed;
+                        if (!left && !right) {
+                          return (
+                            <span className="absolute top-0.5 right-0.5 text-[9px] font-bold text-gray-500">
+                              L/R
+                            </span>
+                          );
+                        }
+                        return (
+                          <span className="absolute top-0.5 right-0.5 flex gap-0.5">
+                            {left && (
+                              <span className="text-[9px] font-bold px-1 rounded bg-amber-900/60 text-amber-200">L</span>
+                            )}
+                            {right && (
+                              <span className="text-[9px] font-bold px-1 rounded bg-amber-900/60 text-amber-200">R</span>
+                            )}
+                          </span>
+                        );
+                      })()}
+                    </div>
+                  ))}
+                </div>
+                <div className="shrink-0 w-40 flex flex-col gap-2">
+                  <div className="text-sm font-bold text-amber-200">Bytegold: {player.bytegold}</div>
+                  <div className="flex flex-col gap-1 text-xs">
+                    <span
+                      className={`px-2 py-1 rounded border ${
+                        player.hasBytechip.L
+                          ? 'border-amber-600 bg-amber-900/40 text-amber-200'
+                          : 'border-gray-700 bg-black/40 text-gray-400'
+                      }`}
+                    >
+                      Bytechip L: {player.hasBytechip.L ? 'yes' : 'no'}
+                    </span>
+                    <span
+                      className={`px-2 py-1 rounded border ${
+                        player.hasBytechip.R
+                          ? 'border-amber-600 bg-amber-900/40 text-amber-200'
+                          : 'border-gray-700 bg-black/40 text-gray-400'
+                      }`}
+                    >
+                      Bytechip R: {player.hasBytechip.R ? 'yes' : 'no'}
+                    </span>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
     </div>
   );
 }
