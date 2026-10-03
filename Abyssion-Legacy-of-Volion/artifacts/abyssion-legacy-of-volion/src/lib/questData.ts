@@ -1,3 +1,5 @@
+import { CYBERWARE_SLOTS } from './cyberware';
+
 export interface Objective {
   id: string;
   type: 'defeat' | 'collect' | 'talk' | 'reach';
@@ -267,14 +269,61 @@ export const INITIAL_QUESTS: Quest[] = [
   },
 ];
 
-export const SHOP_ITEMS: { itemId: string; price: number }[] = [
-  { itemId: 'crispy_chicken', price: 15 },
-  { itemId: 'chicken_steak', price: 20 },
-  { itemId: 'beef_steak', price: 30 },
-  { itemId: 'chicken_katsu', price: 25 },
-  { itemId: 'kebab', price: 12 },
-  { itemId: 'shawarma', price: 18 },
-];
+export interface ShopEntry { itemId: string; price: number; }
+
+/** Per-NPC shop inventories (M2D5 #1). Marcus keeps his food list; Johnny sells
+ *  the 22 organ cyberware entries derived from CYBERWARE_SLOTS; Jimny sells the
+ *  Bytechip implants, the Bytecard, the four core mining components, the seven
+ *  individual PC parts, and ASIC plus the three Computer Packs. */
+export const SHOP_ITEMS_BY_NPC: Record<string, ShopEntry[]> = {
+  npc_marcus: [
+    { itemId: 'crispy_chicken', price: 15 },
+    { itemId: 'chicken_steak', price: 20 },
+    { itemId: 'beef_steak', price: 30 },
+    { itemId: 'chicken_katsu', price: 25 },
+    { itemId: 'kebab', price: 12 },
+    { itemId: 'shawarma', price: 18 },
+  ],
+  // Johnny — derived one-for-one from CYBERWARE_SLOTS (paired slots cost more).
+  npc_johnny: [
+    ...CYBERWARE_SLOTS.map((slot) => ({
+      itemId: `cyber_${slot.id}`,
+      price: slot.paired ? 200 : 120,
+    })),
+  ],
+  // Jimny — Bytechip L/R, Bytecard, the four core mining components, the seven
+  // individual PC parts, and ASIC plus the three Computer Packs (M2D5 #2).
+  npc_jimny: [
+    { itemId: 'bytechip_l', price: 400 },
+    { itemId: 'bytechip_r', price: 400 },
+    { itemId: 'bytecard', price: 250 },
+    { itemId: 'gpu', price: 300 },
+    { itemId: 'rack', price: 250 },
+    { itemId: 'psu', price: 200 },
+    { itemId: 'cpu', price: 350 },
+    { itemId: 'ram', price: 150 },
+    { itemId: 'ssd', price: 250 },
+    { itemId: 'hdd', price: 120 },
+    { itemId: 'case', price: 180 },
+    { itemId: 'motherboard', price: 220 },
+    { itemId: 'cpu_cooler', price: 90 },
+    { itemId: 'thermal_paste', price: 30 },
+    { itemId: 'asic', price: 1500 },
+    { itemId: 'computer_pack_low', price: 900 },
+    { itemId: 'computer_pack_medium', price: 1800 },
+    { itemId: 'computer_pack_high', price: 3200 },
+  ],
+};
+
+/** Legacy single-list binding read by ShopModal. It is repointed by
+ *  setShopInventory() whenever openShop(npcId) runs, so the one existing shop
+ *  render shows the NPC's own inventory. */
+export let SHOP_ITEMS: ShopEntry[] = SHOP_ITEMS_BY_NPC.npc_marcus;
+
+/** Point the shop render at `npcId`'s inventory (fallback: Marcus's list). */
+export function setShopInventory(npcId: string): void {
+  SHOP_ITEMS = SHOP_ITEMS_BY_NPC[npcId] ?? SHOP_ITEMS_BY_NPC.npc_marcus;
+}
 
 export const NPCS_DATA: NPCData[] = [
   {
@@ -672,6 +721,103 @@ export const NPCS_DATA: NPCData[] = [
         'If you go, keep your eyes open. The road is usually kinder than what waits beside it.',
         'Watch the edges of the road. Trouble rarely bothers to stand in the middle and introduce itself.',
         "Survive long enough to come back. That's advice enough.",
+      ],
+    },
+  },
+  // M2D5 #1 — the twin merchants, behind the rotating maze on the north edge.
+  // Johnny sells organ cyberware; Jimny sells Bytechip, Bytecard and mining
+  // components. Both are ordinary merchant entries — the shop id is the npc id.
+  {
+    id: 'npc_johnny',
+    name: 'Johnny',
+    role: 'Cyberware Merchant',
+    type: 'merchant',
+    position: [2, 0, 44],
+    rotationY: Math.PI,
+    dialogue: {
+      greeting: [
+        "Welcome to the edge of the map. I'm Johnny — organs, implants, the works.",
+        'My twin Jimny deals in the hardware. Me? I deal in what goes inside you.',
+      ],
+      questOffer: {
+        dialogue: [
+          'No errands for me. Just goods, if your coin is as solid as your spine.',
+        ],
+      },
+      questInProgress: [
+        'Take your time. The maze outside is not going anywhere.',
+      ],
+      questTurnIn: [
+        'Pleasure doing business.',
+      ],
+      questCompleted: [
+        'Come back when you need another organ upgraded.',
+      ],
+      randomPool: [
+        'The rotating blocks never touch the shelves. Mostly.',
+        'Cyberware is only as good as the tissue it replaces.',
+      ],
+      choices: [
+        {
+          text: 'Show me the cyberware.',
+          resultPages: [
+            'Everything is graded. Nothing here is decorative.',
+          ],
+          openShop: true,
+        },
+        {
+          text: 'Never mind.',
+          resultPages: [
+            'The door is behind you, past the spinning bricks.',
+          ],
+        },
+      ],
+    },
+  },
+  {
+    id: 'npc_jimny',
+    name: 'Jimny',
+    role: 'Rig Equipment Merchant',
+    type: 'merchant',
+    position: [8, 0, 44],
+    rotationY: -Math.PI,
+    dialogue: {
+      greeting: [
+        "Jimny here. Rigs, chips, cards — the machinery that makes Bytegold move.",
+        'My twin Johnny sells the meat-side. I sell the metal-side.',
+      ],
+      questOffer: {
+        dialogue: [
+          'No work for you, just parts. GPU, rack, PSU, CPU — even an ASIC if you are serious.',
+        ],
+      },
+      questInProgress: [
+        'Everything you need to build a rig, right here.',
+      ],
+      questTurnIn: [
+        'Solid picks.',
+      ],
+      questCompleted: [
+        'Come back when you are ready to scale up.',
+      ],
+      randomPool: [
+        'An ASIC eats power and prints Bytegold. Eventually.',
+        'The Bytecard covers the whole Bytegold network in one token.',
+      ],
+      choices: [
+        {
+          text: 'Show me your goods.',
+          resultPages: [
+            'Bytechip, Bytecard, or a rig worth building.',
+          ],
+          openShop: true,
+        },
+        {
+          text: 'Never mind.',
+          resultPages: [
+            'Watch the rotating blocks on the way out.',
+          ],
+        },
       ],
     },
   },

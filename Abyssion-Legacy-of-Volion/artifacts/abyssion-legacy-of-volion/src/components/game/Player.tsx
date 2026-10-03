@@ -22,7 +22,7 @@ import { masteryLevelFor, masteryPointsForEvent, statBonusMultiplier, isSkillUnl
 import { addItem } from '@/lib/inventory';
 import { aggregateMagnitudes, AIM_JITTER_MODE, RANDOM_MOVE_MODE } from '@/lib/debuffs';
 // M2D4 #1 — dungeon entry points (single source of truth lives in GameScene).
-import { dungeonRoomEntryWorld } from './GameScene';
+import { dungeonRoomEntryWorld, PLAYER_HOUSE_BED_WORLD } from './GameScene';
 
 /** M2D2 #1 — the single edge house. GameScene imports these to place the
  *  mesh; the bed interaction below uses BED_POSITION, so the geometry and the
@@ -290,6 +290,9 @@ export default function Player() {
   const [sleeping, setSleeping] = useState(false);
   const sleepCooldownRef = useRef(0); // Date.now() of the last sleep
   const sleepTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // M2D5 #2 F1 — last tick at which the reward-dedup guard was pruned. The
+  // prune shares the existing world-drop tick site; no new timer or effect.
+  const lastPruneRef = useRef(0);
   // Four-piece armour (M1W2D6 #5): derive from the authoritative store state.
   // Attached as children of the body hierarchy so armour follows idle, walk,
   // jump, fall, attack, dodge and hit transforms.
@@ -539,14 +542,19 @@ export default function Player() {
       if (st.ui.interactPrompt) return;
       if (st.gamePhase !== 'playing') return;
       if (Date.now() - sleepCooldownRef.current < SLEEP_COOLDOWN_MS) return;
+      // M2D5 #1 — the player-house interior bed reuses this exact routine; the
+      // target bed is chosen by the authoritative inPlayerHouse flag.
+      const bed = st.player.inPlayerHouse ? PLAYER_HOUSE_BED_WORLD : BED_POSITION;
       const [px, , pz] = st.player.position;
-      const dx = BED_POSITION[0] - px;
-      const dz = BED_POSITION[2] - pz;
+      const dx = bed[0] - px;
+      const dz = bed[2] - pz;
       if (dx * dx + dz * dz > BED_RADIUS_SQ) return;
       // Commence sleep: arm the cooldown, apply the single 1.1× step through
       // the existing cure path (0.9× remaining; it never toasts), then fade.
       sleepCooldownRef.current = Date.now();
-      st.cureDebuffs(0.1);
+      // M2D5 #1 — the cure fraction branches by house: the player house bed
+      // cures half as much as the NPC house bed.
+      st.cureDebuffs(st.player.inPlayerHouse ? 0.05 : 0.1);
       setSleeping(true);
       if (sleepTimeoutRef.current) clearTimeout(sleepTimeoutRef.current);
       sleepTimeoutRef.current = setTimeout(() => {
@@ -694,7 +702,14 @@ export default function Player() {
 
     // M2D2 #1 — expire world drops (60 min) once per frame. O(n) with n small;
     // the action returns early when nothing changed.
-    useGameStore.getState().tickWorldDrops(Date.now());
+    const nowMs = Date.now();
+    useGameStore.getState().tickWorldDrops(nowMs);
+    // M2D5 #2 F1 — prune the exactly-once reward guard at most once a minute,
+    // from the same frame site. No interval/timer is added.
+    if (nowMs - lastPruneRef.current >= 60_000) {
+      lastPruneRef.current = nowMs;
+      useGameStore.getState().pruneRewardedEnemyDeaths(nowMs);
+    }
 
     // Respawn relocation. This must be observed HERE, above the blocking
     // early-return below: while the death overlay is up that branch returns
@@ -1504,29 +1519,28 @@ export default function Player() {
           // first activation (undefined <= 0 is false).
           dcds[skill.id] = Math.max(0, (dcds[skill.id] ?? 0) - effectiveDelta);
           if (pressed && !was && !isDodgingRef.current && dcds[skill.id] <= 0) {
-            if (!skillSlotAllowed(selectedWeapon, SKILL_SLOT_BY_ID[skill.id])) continue;
-            if (!dagSt.isItemSkillUnlocked('dual_dagger', DAGGER_SKILLS.indexOf(skill))) {
-              dagSt.addNotification(`${skill.name} requires a higher weapon level.`);
+            if (!skillSlotAllowed(selectedWeapon, SKILL_SLOT_BY_ID[skill.id])) {
+              dagSt.addNotification(`${skill.name} requires a higher weapon mastery.`);
+              continue;
+            }
+            dcds[skill.id] = DAGGER_SKILL_COOLDOWNS[skill.id];
+            dagSt.reportSkillFired(skill.id);
+            grantSkillMastery(selectedWeapon);
+            dagSt.grantItemExpById('dual_dagger', 8);
+            if (skill.id === 'curse_of_hell') {
+              // Buff only — no direct damage. Applied through the
+              // authoritative transient buff timer read by melee combat.
+              curseOfHellTimerRef.current = CURSE_OF_HELL.duration;
+              dagSt.addNotification('Curse of Hell: blades empowered (+30% damage, +40% attack speed, knockback hits) for 5s.');
             } else {
-              dcds[skill.id] = DAGGER_SKILL_COOLDOWNS[skill.id];
-              dagSt.reportSkillFired(skill.id);
-              grantSkillMastery(selectedWeapon);
-              dagSt.grantItemExpById('dual_dagger', 8);
-              if (skill.id === 'curse_of_hell') {
-                // Buff only — no direct damage. Applied through the
-                // authoritative transient buff timer read by melee combat.
-                curseOfHellTimerRef.current = CURSE_OF_HELL.duration;
-                dagSt.addNotification('Curse of Hell: blades empowered (+30% damage, +40% attack speed, knockback hits) for 5s.');
-              } else {
-                // Serial attack: strikes begin on subsequent frames.
-                const s = tensOfSlashesRef.current;
-                s.active = true;
-                s.elapsed = 0;
-                s.struck = 0;
-                s.timer = 0;
-                s.hitIds.clear();
-                dagSt.addNotification('Tens of Slashes unleashed!');
-              }
+              // Serial attack: strikes begin on subsequent frames.
+              const s = tensOfSlashesRef.current;
+              s.active = true;
+              s.elapsed = 0;
+              s.struck = 0;
+              s.timer = 0;
+              s.hitIds.clear();
+              dagSt.addNotification('Tens of Slashes unleashed!');
             }
           }
           if (dcds[skill.id] > 0 || dagSt.skillState.cooldowns[skill.id] > 0) {
@@ -1734,12 +1748,11 @@ export default function Player() {
           if (pressed && !was && !isDodgingRef.current && gunCooldowns[skill.id] <= 0) {
           // Locked skills never fire — gameplay gates on the same progression
           // state the skill UI displays.
-          if (!skillSlotAllowed(selectedWeapon, SKILL_SLOT_BY_ID[skill.id])) continue;
-          const skillIndex = M1887_SKILLS.indexOf(skill);
-          if (!st.isItemSkillUnlocked('m1887', skillIndex)) {
-            st.addNotification(`${skill.name} requires a higher weapon level.`);
+          if (!skillSlotAllowed(selectedWeapon, SKILL_SLOT_BY_ID[skill.id])) {
+            st.addNotification(`${skill.name} requires a higher weapon mastery.`);
             continue;
           }
+          const skillIndex = M1887_SKILLS.indexOf(skill);
           if (gunAmmoRef.current < skill.shellsUsed) {
             if (gunReloadTimerRef.current <= 0) {
               gunReloadTimerRef.current = M1887_CONFIG.reloadSeconds;
@@ -1797,21 +1810,20 @@ export default function Player() {
           const was = prevCoreSkillInputRefs.current[skill.id] ?? false;
           prevCoreSkillInputRefs.current[skill.id] = pressed;
           if (pressed && !was && !isDodgingRef.current && coreCooldowns[skill.id] <= 0 && dashTimerRef.current <= 0) {
-            if (!skillSlotAllowed(selectedWeapon, SKILL_SLOT_BY_ID[skill.id])) continue;
-            // Locked movement skill never fires — same progression gate as UI.
-            if (!coreSt.isItemSkillUnlocked('resonance_core', RESONANCE_SKILLS.indexOf(skill))) {
-              coreSt.addNotification(`${skill.name} requires a higher Core level.`);
-            } else {
-              coreCooldowns[skill.id] = RESONANCE_SKILL_COOLDOWNS[skill.id];
-              coreSt.reportSkillFired(skill.id);
-              grantSkillMastery(selectedWeapon);
-              const rotY = playerMeshRef.current.rotation.y;
-              dashDirRef.current.set(Math.sin(rotY), 0, Math.cos(rotY)).normalize();
-              dashTimerRef.current = 0.16;
-              dashSpeedRef.current = skill.dashDistance! / 0.16;
-              dashGhostRef.current = 1; // echo afterimage (same visual as sword dash)
-              coreSt.grantItemExpById('resonance_core', 8);
+            if (!skillSlotAllowed(selectedWeapon, SKILL_SLOT_BY_ID[skill.id])) {
+              coreSt.addNotification(`${skill.name} requires a higher Core mastery.`);
+              continue;
             }
+            // Locked movement skill never fires — same progression gate as UI.
+            coreCooldowns[skill.id] = RESONANCE_SKILL_COOLDOWNS[skill.id];
+            coreSt.reportSkillFired(skill.id);
+            grantSkillMastery(selectedWeapon);
+            const rotY = playerMeshRef.current.rotation.y;
+            dashDirRef.current.set(Math.sin(rotY), 0, Math.cos(rotY)).normalize();
+            dashTimerRef.current = 0.16;
+            dashSpeedRef.current = skill.dashDistance! / 0.16;
+            dashGhostRef.current = 1; // echo afterimage (same visual as sword dash)
+            coreSt.grantItemExpById('resonance_core', 8);
           }
           if (coreCooldowns[skill.id] > 0 || coreSt.skillState.cooldowns[skill.id] > 0) {
             coreSt.reportSkillCooldown(skill.id, coreCooldowns[skill.id]);
@@ -1821,14 +1833,12 @@ export default function Player() {
         const was = prevCoreSkillInputRefs.current[skill.id] ?? false;
         prevCoreSkillInputRefs.current[skill.id] = pressed;
         if (pressed && !was && !isDodgingRef.current && coreCooldowns[skill.id] <= 0) {
-          if (!skillSlotAllowed(selectedWeapon, SKILL_SLOT_BY_ID[skill.id])) continue;
-          // Locked skills never fire — gameplay gates on the same progression
-          // state the skill UI displays.
-          if (!coreSt.isItemSkillUnlocked('resonance_core', RESONANCE_SKILLS.indexOf(skill))) {
-            coreSt.addNotification(`${skill.name} requires a higher Core level.`);
-            prevCoreSkillInputRefs.current[skill.id] = was;
+          if (!skillSlotAllowed(selectedWeapon, SKILL_SLOT_BY_ID[skill.id])) {
+            coreSt.addNotification(`${skill.name} requires a higher Core mastery.`);
             continue;
           }
+          // Locked skills never fire — gameplay gates on the same progression
+          // state the skill UI displays.
           coreCooldowns[skill.id] = RESONANCE_SKILL_COOLDOWNS[skill.id];
           coreSt.reportSkillFired(skill.id);
           grantSkillMastery(selectedWeapon);
@@ -2028,12 +2038,11 @@ export default function Player() {
         const was = prevCrossbowSkillInputRefs.current[key] ?? false;
         prevCrossbowSkillInputRefs.current[key] = pressed;
         if (pressed && !was && !isDodgingRef.current && crossbowCooldowns[skill.id] <= 0) {
-          if (!skillSlotAllowed(selectedWeapon, SKILL_SLOT_BY_ID[skill.id])) continue;
-          const skillIndex = CROSSBOW_SKILLS.indexOf(skill);
-          if (!st.isItemSkillUnlocked('crossbow', skillIndex)) {
-            st.addNotification(`${skill.name} requires a higher weapon level.`);
+          if (!skillSlotAllowed(selectedWeapon, SKILL_SLOT_BY_ID[skill.id])) {
+            st.addNotification(`${skill.name} requires a higher weapon mastery.`);
             continue;
           }
+          const skillIndex = CROSSBOW_SKILLS.indexOf(skill);
           if (skill.id === 'triplex_lactus') {
             // Z — Triplex Lactus: exactly 3 arrows at −10°/0°/+10°. Ammo is
             // consumed only if ALL three projectiles spawn successfully.

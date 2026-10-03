@@ -2,7 +2,7 @@
 
 import { Suspense, useMemo, useRef, useState, type RefObject } from 'react';
 import { Canvas } from '@react-three/fiber';
-import { Physics, RigidBody, CuboidCollider } from '@react-three/rapier';
+import { Physics, RigidBody, CuboidCollider, type RapierRigidBody } from '@react-three/rapier';
 import { KeyboardControls, Sky, Html } from '@react-three/drei';
 import * as THREE from 'three';
 import {
@@ -503,6 +503,252 @@ function ArrowBundlePickup({ position }: { position: [number, number, number] })
   return null;
 }
 
+/** M2D5 #1 — TWIN MERCHANTS' ROTATING MAZE.
+ *  A compact field of building blocks on the north (+z) edge, between the
+ *  village approach (entry ~z = 18) and the twin merchants Johnny / Jimny at
+ *  z = 44. Each block is a kinematic-position body rotated around its own Y
+ *  axis by one existing useFrame; the gaps between blocks open and close as they
+ *  turn, so the player walks the moving gaps. No hard gate, no collider
+ *  disable. Values: 12 blocks (4 columns x 3 rows), 2.4 m square by 3.2 m tall,
+ *  5 m centre spacing (>= 1.6 m clearance even at 45 deg), 0.5 rad/s. */
+const MAZE_BLOCK_SIZE = 2.4;
+const MAZE_BLOCK_HEIGHT = 3.2;
+const MAZE_ROTATION_SPEED = 0.5; // rad/s, constant per block
+const MAZE_COLUMNS = [-2.5, 2.5, 7.5, 12.5];
+const MAZE_ROWS = [22, 27.5, 33];
+// M2D5 #2 F3 — one reusable rotation scratch for every maze body per frame.
+const _mazeQuat: { x: number; y: number; z: number; w: number } = { x: 0, y: 0, z: 0, w: 1 };
+
+export const MAZE_ENTRY_POINT: [number, number, number] = [5, 0, 18];
+
+function RotatingMaze() {
+  const blocks = useMemo(
+    () =>
+      MAZE_ROWS.flatMap((z, r) =>
+        MAZE_COLUMNS.map((x, c) => ({ x, z, phase: ((r * MAZE_COLUMNS.length + c) * Math.PI) / 6 })),
+      ),
+    [],
+  );
+  const bodyRefs = useRef<(RapierRigidBody | null)[]>([]);
+  const anglesRef = useRef<number[]>([]);
+  if (anglesRef.current.length !== blocks.length) {
+    anglesRef.current = blocks.map((b) => b.phase);
+  }
+  useFrame((_, delta) => {
+    // F3 — a zero delta means no rotation update this frame; skip Rapier.
+    if (delta === 0) return;
+    for (let i = 0; i < blocks.length; i += 1) {
+      const body = bodyRefs.current[i];
+      if (!body) continue;
+      anglesRef.current[i] += delta * MAZE_ROTATION_SPEED;
+      const half = anglesRef.current[i] / 2;
+      // F3 — mutate the shared scratch instead of a per-block object literal.
+      _mazeQuat.x = 0;
+      _mazeQuat.y = Math.sin(half);
+      _mazeQuat.z = 0;
+      _mazeQuat.w = Math.cos(half);
+      body.setNextKinematicRotation(_mazeQuat);
+    }
+  });
+  return (
+    <>
+      {blocks.map((b, i) => (
+        <RigidBody
+          key={`maze_${i}`}
+          ref={(r) => { bodyRefs.current[i] = r; }}
+          type="kinematicPosition"
+          position={[b.x, 0, b.z]}
+          colliders={false}
+        >
+          <CuboidCollider args={[MAZE_BLOCK_SIZE / 2, MAZE_BLOCK_HEIGHT / 2, MAZE_BLOCK_SIZE / 2]} position={[0, MAZE_BLOCK_HEIGHT / 2, 0]} />
+          <mesh castShadow receiveShadow position={[0, MAZE_BLOCK_HEIGHT / 2, 0]}>
+            <boxGeometry args={[MAZE_BLOCK_SIZE, MAZE_BLOCK_HEIGHT, MAZE_BLOCK_SIZE]} />
+            <meshToonMaterial color="#334155" />
+          </mesh>
+          <mesh position={[0, MAZE_BLOCK_HEIGHT, 0]}>
+            <boxGeometry args={[MAZE_BLOCK_SIZE * 0.7, 0.18, MAZE_BLOCK_SIZE * 0.7]} />
+            <meshToonMaterial color="#475569" emissive="#1e293b" emissiveIntensity={0.4} />
+          </mesh>
+        </RigidBody>
+      ))}
+    </>
+  );
+}
+
+/** M2D5 #1 — a small floating accessory above one twin so Johnny (amber) and
+ *  Jimny (cyan) read as distinct without a new model. */
+function TwinMarker({ position, color }: { position: [number, number, number]; color: string }) {
+  return (
+    <mesh position={[position[0], 2.7, position[2]]}>
+      <octahedronGeometry args={[0.22, 0]} />
+      <meshToonMaterial color={color} emissive={color} emissiveIntensity={1.6} />
+    </mesh>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// M2D5 #1 — PLAYER HOUSE (inheritance)
+// A run-down, windowless single-room shell near Village Haven (worst palette,
+// smallest footprint) plus its far-away interior cell at the mirror origin of
+// DUNGEON_ORIGIN on the opposite X axis. No ownership flag: it exists from
+// New Game. The interior mounts only while player.inPlayerHouse === true.
+// ═══════════════════════════════════════════════════════════════════════════
+
+export const PLAYER_HOUSE_WORLD_POSITION: [number, number, number] = [12, 0, -6];
+export const PLAYER_HOUSE_INTERIOR_ORIGIN: [number, number, number] = [-500, 0, 0];
+const PLAYER_HOUSE_HALF = 1.2;          // 2.4 m footprint — smallest house
+const PLAYER_HOUSE_WALL_H = 2.2;        // single story, lower than every other
+const PLAYER_HOUSE_INTERIOR_HALF = 2.5; // 5 x 5 — smallest interior in project
+const PLAYER_HOUSE_INTERIOR_H = 3;
+const PLAYER_HOUSE_PROMPT_ENTER = 'Enter Home';
+const PLAYER_HOUSE_PROMPT_LEAVE = 'Leave Home';
+
+/** World-space arrival point inside the interior (just inside the -z wall). */
+export function playerHouseInteriorEntryWorld(): [number, number, number] {
+  const [ox, oy, oz] = PLAYER_HOUSE_INTERIOR_ORIGIN;
+  return [ox, oy + 1, oz - PLAYER_HOUSE_INTERIOR_HALF + 1];
+}
+/** World-space return point 2 m in front of the player-house door (+z). */
+export function playerHouseExitWorldPosition(): [number, number, number] {
+  return [PLAYER_HOUSE_WORLD_POSITION[0], 1, PLAYER_HOUSE_WORLD_POSITION[2] + PLAYER_HOUSE_HALF + 2];
+}
+/** World-space centre of the exterior door (front, +z wall). */
+const playerHouseDoorWorld = (): [number, number, number] => [
+  PLAYER_HOUSE_WORLD_POSITION[0],
+  PLAYER_HOUSE_WORLD_POSITION[1],
+  PLAYER_HOUSE_WORLD_POSITION[2] + PLAYER_HOUSE_HALF,
+];
+/** World-space centre of the interior +z exit-door interact zone. */
+const playerHouseInteriorExitDoorWorld = (): [number, number, number] => [
+  PLAYER_HOUSE_INTERIOR_ORIGIN[0],
+  PLAYER_HOUSE_INTERIOR_ORIGIN[1],
+  PLAYER_HOUSE_INTERIOR_ORIGIN[2] + PLAYER_HOUSE_INTERIOR_HALF - 0.5,
+];
+/** The interior bed, against the -x wall toward -z (E within 2 m sleeps). */
+export const PLAYER_HOUSE_BED_WORLD: [number, number, number] = [
+  PLAYER_HOUSE_INTERIOR_ORIGIN[0] - 1.6,
+  PLAYER_HOUSE_INTERIOR_ORIGIN[1],
+  PLAYER_HOUSE_INTERIOR_ORIGIN[2] - 1.4,
+];
+
+/** The exterior shell: same wall/floor/ceiling pattern as EdgeHouse, but the
+ *  smallest footprint, a single story, one broken window, a sagging flat roof
+ *  and the darkest existing wood palette. The +z door is a solid dark slab (no
+ *  walk-through) driven by the "Enter Home" interact. */
+function PlayerHouseExterior() {
+  const half = PLAYER_HOUSE_HALF;
+  const H = PLAYER_HOUSE_WALL_H;
+  const wallColor = '#92400e';
+  return (
+    <group position={PLAYER_HOUSE_WORLD_POSITION}>
+      <RigidBody type="fixed" colliders={false}>
+        <CuboidCollider args={[half, 0.5, half]} position={[0, -0.5, 0]} />
+        <CuboidCollider args={[half, H / 2, 0.1]} position={[0, H / 2, -half]} />
+        <CuboidCollider args={[0.1, H / 2, half]} position={[-half, H / 2, 0]} />
+        <CuboidCollider args={[0.1, H / 2, half]} position={[half, H / 2, 0]} />
+        <CuboidCollider args={[half, H / 2, 0.1]} position={[0, H / 2, half]} />
+      </RigidBody>
+      <mesh position={[0, 0.01, 0]} rotation={[-Math.PI / 2, 0, 0]} receiveShadow>
+        <planeGeometry args={[half * 2, half * 2]} />
+        <meshToonMaterial color="#4a3a24" />
+      </mesh>
+      <mesh position={[0, H, 0]} rotation={[Math.PI / 2, 0, 0]} receiveShadow>
+        <planeGeometry args={[half * 2, half * 2]} />
+        <meshToonMaterial color="#3b2a1a" side={THREE.DoubleSide} />
+      </mesh>
+      {([
+        [[0, H / 2, -half], [half * 2, H, 0.2]],
+        [[-half, H / 2, 0], [0.2, H, half * 2]],
+        [[half, H / 2, 0], [0.2, H, half * 2]],
+        [[0, H / 2, half], [half * 2, H, 0.2]],
+      ] as const).map(([pos, size], i) => (
+        <mesh key={`ph-wall-${i}`} position={pos as unknown as [number, number, number]} castShadow receiveShadow>
+          <boxGeometry args={size as unknown as [number, number, number]} />
+          <meshToonMaterial color={wallColor} />
+        </mesh>
+      ))}
+      {/* The single broken window (one dark pane on the -x wall). */}
+      <mesh position={[-half - 0.01, H * 0.6, 0]} castShadow>
+        <boxGeometry args={[0.05, 0.5, 0.5]} />
+        <meshToonMaterial color="#111827" />
+      </mesh>
+      {/* Dark +z door slab (interact marker; no walk-through). */}
+      <mesh position={[0, 1.0, half + 0.01]} castShadow receiveShadow>
+        <boxGeometry args={[0.9, 1.9, 0.12]} />
+        <meshToonMaterial color="#2a1a0c" />
+      </mesh>
+      {/* Sagging flat roof — run-down, no decoration. */}
+      <mesh position={[0, H + 0.12, 0]} rotation={[0.06, 0, 0]} castShadow>
+        <boxGeometry args={[half * 2.2, 0.24, half * 2.2]} />
+        <meshToonMaterial color="#3f1d1d" />
+      </mesh>
+    </group>
+  );
+}
+
+/** The far-away interior cell: single 5 x 5 room, floor at local y=0, ceiling
+ *  at local y=3, four solid walls, a -z threshold marker and the +z exit door.
+ *  One bed only. Mounted only while inPlayerHouse is true. */
+function PlayerHouseInterior() {
+  const half = PLAYER_HOUSE_INTERIOR_HALF;
+  const H = PLAYER_HOUSE_INTERIOR_H;
+  return (
+    <group position={PLAYER_HOUSE_INTERIOR_ORIGIN}>
+      <RigidBody type="fixed" colliders={false}>
+        <CuboidCollider args={[half, 0.5, half]} position={[0, -0.5, 0]} />
+        <CuboidCollider args={[half, H / 2, 0.1]} position={[0, H / 2, -half]} />
+        <CuboidCollider args={[half, H / 2, 0.1]} position={[0, H / 2, half]} />
+        <CuboidCollider args={[0.1, H / 2, half]} position={[-half, H / 2, 0]} />
+        <CuboidCollider args={[0.1, H / 2, half]} position={[half, H / 2, 0]} />
+      </RigidBody>
+      <mesh position={[0, 0.01, 0]} rotation={[-Math.PI / 2, 0, 0]} receiveShadow>
+        <planeGeometry args={[half * 2, half * 2]} />
+        <meshToonMaterial color="#4a3a24" />
+      </mesh>
+      <mesh position={[0, H, 0]} rotation={[Math.PI / 2, 0, 0]} receiveShadow>
+        <planeGeometry args={[half * 2, half * 2]} />
+        <meshToonMaterial color="#3b2a1a" side={THREE.DoubleSide} />
+      </mesh>
+      {([
+        [[0, H / 2, -half], [half * 2, H, 0.2]],
+        [[-half, H / 2, 0], [0.2, H, half * 2]],
+        [[half, H / 2, 0], [0.2, H, half * 2]],
+        [[0, H / 2, half], [half * 2, H, 0.2]],
+      ] as const).map(([pos, size], i) => (
+        <mesh key={`phi-wall-${i}`} position={pos as unknown as [number, number, number]} castShadow receiveShadow>
+          <boxGeometry args={size as unknown as [number, number, number]} />
+          <meshToonMaterial color="#92400e" />
+        </mesh>
+      ))}
+      {/* -z door threshold marker (arrival side). */}
+      <mesh position={[0, 0.02, -half + 0.05]} rotation={[-Math.PI / 2, 0, 0]} receiveShadow>
+        <planeGeometry args={[1.4, 0.4]} />
+        <meshToonMaterial color="#2a1a0c" />
+      </mesh>
+      {/* +z exit door (solid slab with the "Leave Home" interact in front). */}
+      <mesh position={[0, 1.0, half + 0.01]} castShadow receiveShadow>
+        <boxGeometry args={[0.9, 1.9, 0.12]} />
+        <meshToonMaterial color="#2a1a0c" />
+      </mesh>
+      {/* The single bed — no other furniture. */}
+      <group position={[-1.6, 0, -1.4]}>
+        <mesh position={[0, 0.25, 0]} castShadow receiveShadow>
+          <boxGeometry args={[1.1, 0.5, 2.2]} />
+          <meshToonMaterial color="#3b2a1a" />
+        </mesh>
+        <mesh position={[0, 0.58, 0.1]} castShadow>
+          <boxGeometry args={[1, 0.16, 2]} />
+          <meshToonMaterial color="#6b7280" />
+        </mesh>
+        <mesh position={[0, 0.7, -0.75]} castShadow>
+          <boxGeometry args={[0.7, 0.14, 0.4]} />
+          <meshToonMaterial color="#9ca3af" />
+        </mesh>
+      </group>
+    </group>
+  );
+}
+
 /** M2D2 #1 — the single edge house: floor, north/east/west walls, a south wall
  *  with a doorway gap, a ceiling, one bed and a door threshold marker.
  *  Interior geometry only; minimal materials reuse the village palette. Its
@@ -614,19 +860,24 @@ function HouseOccupancyZone({
   return null;
 }
 
-/** M2D2 #1 — world-drop meshes. Renders one 0.2 m cube RigidBody per drop that
- *  is within 30 m of the player AND inside the camera frustum. Rapier owns the
- *  simulation (gravity, plus the collider mass set from the item's weightGrams);
- *  the store owns the authoritative list. Drops outside the render window are
- *  simply not mounted, so a reload re-mounts them lazily when they enter view. */
+/** M2D2 #1 / M2D5 #2 F2 — world-drop meshes. Rapier owns the simulation
+ *  (gravity, plus the collider mass set from the item's weightGrams); the store
+ *  owns the authoritative list. Once a drop has entered the 30 m + frustum
+ *  window its RigidBody STAYS mounted until the drop leaves `player.worldDrops`
+ *  (expiry / pickup) — leaving the frustum only hides the mesh, so the mount /
+ *  unmount churn as the camera moves stops. Mounting is bounded by
+ *  WORLD_DROP_MESH_CAP: older drops remain in the store (they still tick to
+ *  expiry) but are not mounted. */
+const WORLD_DROP_MESH_CAP = 100;
 function WorldDropMeshes() {
   const worldDrops = useGameStore((s) => s.player.worldDrops);
   const { camera } = useThree();
-  // Ids currently in the render window. Held in a ref too so the per-frame
-  // frustum test only calls setState when membership actually changes — no
-  // per-frame re-render, no per-frame allocation (scratch objects are reused).
-  const visibleRef = useRef<string[]>([]);
-  const [visibleIds, setVisibleIds] = useState<string[]>([]);
+  // Ids that have ever entered the render window. The ref is authoritative and
+  // the state drives rendering, so setState fires only when membership changes
+  // — no per-frame re-render, no per-frame array allocation.
+  const mountedRef = useRef<Set<string>>(new Set());
+  const [mountedIds, setMountedIds] = useState<string[]>([]);
+  const meshRefs = useRef<Map<string, THREE.Mesh>>(new Map());
   const frustumRef = useRef(new THREE.Frustum());
   const projScreenRef = useRef(new THREE.Matrix4());
   const scratchRef = useRef(new THREE.Vector3());
@@ -635,6 +886,7 @@ function WorldDropMeshes() {
     // Read the player position off the store instead of subscribing: it is
     // rewritten every frame, and a subscription would re-render this component
     // on every frame.
+    const drops = useGameStore.getState().player.worldDrops;
     const [px, py, pz] = useGameStore.getState().player.position;
     camera.updateMatrixWorld();
     frustumRef.current.setFromProjectionMatrix(
@@ -642,26 +894,65 @@ function WorldDropMeshes() {
     );
     const frustum = frustumRef.current;
     const scratch = scratchRef.current;
-    const next: string[] = [];
-    for (const d of worldDrops) {
+    const mounted = mountedRef.current;
+
+    let changed = false;
+
+    // Store entry gone (expiry / pickup): unmount + prune the membership set.
+    for (const id of mounted) {
+      if (!drops.some((d) => d.id === id)) {
+        mounted.delete(id);
+        meshRefs.current.delete(id);
+        changed = true;
+      }
+    }
+
+    // Visibility pass — presentation only; the RigidBody stays mounted.
+    for (const id of mounted) {
+      const mesh = meshRefs.current.get(id);
+      if (!mesh) continue;
+      const drop = drops.find((d) => d.id === id);
+      if (!drop) continue;
+      const dx = drop.position[0] - px;
+      const dy = drop.position[1] - py;
+      const dz = drop.position[2] - pz;
+      if (dx * dx + dy * dy + dz * dz > 30 * 30) {
+        mesh.visible = false;
+        continue;
+      }
+      scratch.set(drop.position[0], drop.position[1], drop.position[2]);
+      mesh.visible = frustum.containsPoint(scratch);
+    }
+
+    // Membership pass — mount a drop the first time it enters the window.
+    for (const d of drops) {
+      if (mounted.has(d.id)) continue;
       const dx = d.position[0] - px;
       const dy = d.position[1] - py;
       const dz = d.position[2] - pz;
       if (dx * dx + dy * dy + dz * dz > 30 * 30) continue;
       scratch.set(d.position[0], d.position[1], d.position[2]);
-      if (frustum.containsPoint(scratch)) next.push(d.id);
+      if (!frustum.containsPoint(scratch)) continue;
+      mounted.add(d.id);
+      changed = true;
     }
-    const prev = visibleRef.current;
-    if (next.length !== prev.length || next.some((id, i) => id !== prev[i])) {
-      visibleRef.current = next;
-      setVisibleIds(next);
+    if (mounted.size > WORLD_DROP_MESH_CAP) {
+      // Keep only the newest WORLD_DROP_MESH_CAP drops by droppedAt.
+      const keep = drops
+        .filter((d) => mounted.has(d.id))
+        .sort((a, b) => b.droppedAt - a.droppedAt)
+        .slice(0, WORLD_DROP_MESH_CAP);
+      mounted.clear();
+      for (const d of keep) mounted.add(d.id);
+      changed = true;
     }
+    if (changed) setMountedIds(Array.from(mounted));
   });
 
-  if (visibleIds.length === 0) return null;
+  if (mountedIds.length === 0) return null;
   return (
     <group>
-      {visibleIds.map((id) => {
+      {mountedIds.map((id) => {
         const drop = worldDrops.find((d) => d.id === id);
         if (!drop) return null;
         const mass = Math.max(1, getItem(drop.itemId)?.weightGrams ?? 1);
@@ -674,7 +965,13 @@ function WorldDropMeshes() {
             angularDamping={0.4}
           >
             <CuboidCollider args={[0.1, 0.1, 0.1]} mass={mass} />
-            <mesh castShadow>
+            <mesh
+              castShadow
+              ref={(m) => {
+                if (m) meshRefs.current.set(drop.id, m);
+                else meshRefs.current.delete(drop.id);
+              }}
+            >
               <boxGeometry args={[0.2, 0.2, 0.2]} />
               <meshToonMaterial color="#d9a441" />
             </mesh>
@@ -1995,6 +2292,8 @@ export default function GameScene() {
   const dungeonRoom = useGameStore((state) => state.player.dungeonRoom);
   // M2D4 #2 — the boss mounts in the bossroom only until it has been defeated.
   const bossDefeated = useGameStore((state) => state.player.bossDefeated);
+  // M2D5 #1 — the player house interior mounts only while inside.
+  const inPlayerHouse = useGameStore((state) => state.player.inPlayerHouse);
   // E2: the two existing lights are driven imperatively by the day cycle
   // (position + intensity only); their JSX baseline stays as authored.
   const ambientLightRef = useRef<THREE.AmbientLight>(null);
@@ -2090,6 +2389,14 @@ export default function GameScene() {
         runBossroomLoading();
       } else if (prompt === DUNGEON_PROMPT_EXIT) {
         runFade(() => useGameStore.getState().exitDungeon(), dungeonExitWorldPosition());
+      } else if (prompt === PLAYER_HOUSE_PROMPT_ENTER) {
+        runFade(() => {
+          const s = useGameStore.getState();
+          s.setPlayerHouseInterior(true);
+          s.enterPlayerHouse();
+        }, playerHouseInteriorEntryWorld());
+      } else if (prompt === PLAYER_HOUSE_PROMPT_LEAVE) {
+        runFade(() => useGameStore.getState().exitPlayerHouse(), playerHouseExitWorldPosition());
       }
     };
 
@@ -2196,6 +2503,12 @@ export default function GameScene() {
                 <NPC key={npc.id} data={npc} />
               ))}
 
+              {/* M2D5 #1 — rotating maze + the twin merchants' markers on the
+                  north edge (Johnny amber, Jimny cyan). */}
+              <RotatingMaze />
+              <TwinMarker position={[2, 0, 44]} color="#f59e0b" />
+              <TwinMarker position={[8, 0, 44]} color="#22d3ee" />
+
               {/* ═══════════════════════════════════════════════════════
                   SETTLEMENT STRUCTURES
                   ═══════════════════════════════════════════════════════ */}
@@ -2288,6 +2601,17 @@ export default function GameScene() {
                   bed and a door threshold; no lock, no aggro change. */}
               <EdgeHouse />
               <HouseOccupancyZone center={HOUSE_POSITION} halfX={3} halfZ={3} />
+
+              {/* M2D5 #1 — the player-owned house (inheritance): exterior is
+                  always present; the interior cell mounts only while inside. */}
+              <PlayerHouseExterior />
+              {!inPlayerHouse && (
+                <DungeonDoorZone position={playerHouseDoorWorld()} label={PLAYER_HOUSE_PROMPT_ENTER} />
+              )}
+              {inPlayerHouse && <PlayerHouseInterior />}
+              {inPlayerHouse && (
+                <DungeonDoorZone position={playerHouseInteriorExitDoorWorld()} label={PLAYER_HOUSE_PROMPT_LEAVE} />
+              )}
 
               {/* M2D4 #1 — the world-side dungeon door + the shell (mounted only
                   while the player is inside it) + per-room checkpoint tracking. */}

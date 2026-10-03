@@ -19,9 +19,6 @@ export function expForLevel(level: number): number {
 
 export const MAX_ITEM_LEVEL = 10;
 
-/** Skills unlock by item level (1-based index into the item's skill list). */
-export const SKILL_UNLOCK_LEVELS: readonly number[] = [1, 1, 3, 3, 5];
-
 export interface ItemProgression {
   exp: number;
   level: number;
@@ -46,12 +43,6 @@ export function grantItemExp(
   }
   if (level >= MAX_ITEM_LEVEL) exp = Math.min(exp, expForLevel(MAX_ITEM_LEVEL));
   return { prog: { exp, level }, leveledTo };
-}
-
-/** Is the skill at 0-based `index` unlocked for an item at `level`? */
-export function isSkillUnlocked(level: number, index: number): boolean {
-  const req = SKILL_UNLOCK_LEVELS[Math.min(index, SKILL_UNLOCK_LEVELS.length - 1)] ?? 1;
-  return level >= req;
 }
 
 // ── Player stats (P8) ──────────────────────────────────────────────────────
@@ -107,7 +98,7 @@ export function categoryStatKey(cat: WeaponCategory): keyof PlayerStats | null {
 // Player-side mastery is a pure function of the EXP held in
 // player.mastery[itemId]. Level is always DERIVED, never stored. This is a
 // separate curve from the older 1-based item-progression system above
-// (MAX_ITEM_LEVEL / SKILL_UNLOCK_LEVELS / ItemProgression) — that system is
+// (MAX_ITEM_LEVEL / ItemProgression) — that system is
 // untouched and unrelated.
 
 /** Skill-slot letters. The Core owns all five; every other weapon the first

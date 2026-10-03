@@ -139,12 +139,18 @@ export default function HolyCrystallinizerWizard({ position }: EnemyProps) {
   // below can observe the death frame (BaseEnemy owns hp and cannot be changed).
   const hpSeenRef = useRef(config.maxHp);
   const deathHandledRef = useRef(false);
+  // M2D5 #1 — last boss-bar state pushed to the store, so the per-frame sync
+  // writes only when the displayed tuple actually changes.
+  const bossBarRef = useRef<{ name: string; health: number; maxHealth: number; active: boolean } | null>(null);
 
   const phaseRef = useRef<BossPhase>(0);
   const [phase, setPhase] = useState<BossPhase>(0);
   const [flash, setFlash] = useState(false);
   const flashTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [projectiles, setProjectiles] = useState<BossProjectile[]>([]);
+  // M2D5 #2 F4 — meshes are moved imperatively; state is written only when a
+  // projectile is added/removed, never for pure movement.
+  const projectileMeshRefs = useRef<Map<string, THREE.Mesh>>(new Map());
   const [allies, setAllies] = useState<{ id: string; pos: [number, number, number] }[]>([]);
 
   const attackTimerRef = useRef(3);
@@ -156,6 +162,8 @@ export default function HolyCrystallinizerWizard({ position }: EnemyProps) {
 
   useEffect(() => () => {
     if (flashTimerRef.current) clearTimeout(flashTimerRef.current);
+    // M2D5 #1 — hide the existing Custom HUD boss bar when the boss unmounts.
+    useGameStore.getState().setBossState(null);
   }, []);
 
   // Boss-only death extras. Runs after every render; hpSeenRef is refreshed by
@@ -166,6 +174,8 @@ export default function HolyCrystallinizerWizard({ position }: EnemyProps) {
     deathHandledRef.current = true;
     const store = useGameStore.getState();
     store.defeatBoss();
+    // M2D5 #1 — hide the existing Custom HUD boss bar on death.
+    store.setBossState(null);
 
     // Grant one item into the inventory; anything that will not fit becomes a
     // world drop at the boss's position. Reads FRESH state per grant so two
@@ -209,26 +219,39 @@ export default function HolyCrystallinizerWizard({ position }: EnemyProps) {
     }
 
     if (projectiles.length === 0) return;
-    setProjectiles((prev) => {
-      const pp = useGameStore.getState().player.position;
-      _playerPos.set(pp[0], pp[1] + 1.0, pp[2]);
-      const next: BossProjectile[] = [];
-      for (const p of prev) {
-        p.life -= delta;
-        p.pos.addScaledVector(p.dir, p.speed * delta);
-        if (p.pos.distanceTo(_playerPos) <= 2.2) {
-          const hit = useGameStore.getState().damagePlayer(p.damage);
-          if (hit && playerRigidBodyRef.current) {
-            const kb = _kbDir.copy(_playerPos).sub(p.pos).setY(0).normalize();
-            guardedPlayerImpulse({ x: kb.x * config.knockback, y: 3, z: kb.z * config.knockback });
-          }
-          continue;
+    const pp = useGameStore.getState().player.position;
+    _playerPos.set(pp[0], pp[1] + 1.0, pp[2]);
+    let changed = false;
+    const survivors: BossProjectile[] = [];
+    for (const p of projectiles) {
+      p.life -= delta;
+      p.pos.addScaledVector(p.dir, p.speed * delta);
+      if (p.pos.distanceTo(_playerPos) <= 2.2) {
+        const hit = useGameStore.getState().damagePlayer(p.damage);
+        if (hit && playerRigidBodyRef.current) {
+          const kb = _kbDir.copy(_playerPos).sub(p.pos).setY(0).normalize();
+          guardedPlayerImpulse({ x: kb.x * config.knockback, y: 3, z: kb.z * config.knockback });
         }
-        if (p.life <= 0 || p.pos.y <= 0.2) continue;
-        next.push(p);
+        changed = true;
+        continue;
       }
-      return next;
-    });
+      if (p.life <= 0 || p.pos.y <= 0.2) {
+        changed = true;
+        continue;
+      }
+      survivors.push(p);
+      // F4 — move the mounted mesh directly instead of re-rendering.
+      const mesh = projectileMeshRefs.current.get(p.id);
+      if (mesh) {
+        mesh.position.set(
+          p.pos.x - currentPosRef.current.x,
+          p.pos.y - currentPosRef.current.y,
+          p.pos.z - currentPosRef.current.z,
+        );
+      }
+    }
+    // F4 — React state only when a projectile leaves the list.
+    if (changed) setProjectiles(survivors);
   });
 
   const spawnProjectile = (from: THREE.Vector3, target: THREE.Vector3, isFire: boolean) => {
@@ -256,6 +279,17 @@ export default function HolyCrystallinizerWizard({ position }: EnemyProps) {
     const { state, rigidBodyRef, playerPos, distToPlayer, scaledConfig } = ctx;
     if (!rigidBodyRef.current || state === 'death') return false;
     hpSeenRef.current = ctx.hp;
+
+    // M2D5 #1 — drive the existing Custom HUD boss bar from the boss entity's
+    // authoritative HP. Writes only when the displayed tuple changes, so the
+    // store / GameHUD are not re-rendered every frame.
+    const bossMaxHp = scaledConfig.maxHp;
+    const prevBoss = bossBarRef.current;
+    if (!prevBoss || prevBoss.health !== ctx.hp || prevBoss.maxHealth !== bossMaxHp) {
+      const nextBoss = { name: config.name, health: ctx.hp, maxHealth: bossMaxHp, active: true };
+      bossBarRef.current = nextBoss;
+      useGameStore.getState().setBossState(nextBoss);
+    }
 
     const t = rigidBodyRef.current.translation();
     const curr = _curr.set(t.x, t.y, t.z);
@@ -369,15 +403,19 @@ export default function HolyCrystallinizerWizard({ position }: EnemyProps) {
           <meshToonMaterial color={phaseColor} emissive={phaseColor} emissiveIntensity={1.6} />
         </mesh>
         {projectiles.map((p) => (
-          <mesh
-            key={p.id}
-            position={[
-              p.pos.x - currentPosRef.current.x,
-              p.pos.y - currentPosRef.current.y,
-              p.pos.z - currentPosRef.current.z,
-            ]}
-          >
-            {p.kind === 'shard' ? (
+        <mesh
+          key={p.id}
+          ref={(m) => {
+            if (m) projectileMeshRefs.current.set(p.id, m);
+            else projectileMeshRefs.current.delete(p.id);
+          }}
+          position={[
+            p.pos.x - currentPosRef.current.x,
+            p.pos.y - currentPosRef.current.y,
+            p.pos.z - currentPosRef.current.z,
+          ]}
+        >
+          {p.kind === 'shard' ? (
               <octahedronGeometry args={[0.3, 0]} />
             ) : (
               <sphereGeometry args={[0.32, 12, 12]} />

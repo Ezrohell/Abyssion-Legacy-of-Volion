@@ -1,18 +1,18 @@
 import { create } from 'zustand';
 import * as THREE from 'three';
-import { Quest, Objective, INITIAL_QUESTS, NPCS_DATA, NpcType, DialogueChoice } from './questData';
+import { Quest, Objective, INITIAL_QUESTS, NPCS_DATA, NpcType, DialogueChoice, setShopInventory } from './questData';
 import { t, Lang } from './translations';
 import { InventoryState, createInventory, addItem, removeItem, getItemCount, getItemCountByName, getOccupiedSlots, getActiveCategories, type InventorySlot } from './inventory';
 import { Archetype, canUseWeapon } from './archetype';
 import { getItem, getItemIdByName, armourSlotOf, type ArmourSlot } from './items';
 import { COMBAT_CONFIG } from './combatConfig';
 import { HudLayout, HudElementId, HudElementConfig, DEFAULT_HUD_LAYOUT, migrateHudLayout, SkillHudConfig, SkillHudEntry } from './hudConfig';
-import { ItemProgression, PlayerStats, createItemProgression, createPlayerStats, grantItemExp, isSkillUnlocked, masteryLevelFor } from './progression';
+import { ItemProgression, PlayerStats, createItemProgression, createPlayerStats, grantItemExp, masteryLevelFor } from './progression';
 import { masteryPointsForEvent } from './progression';
 import { CURE_ITEMS, type DebuffInstance, type DebuffTier, type DebuffType } from './debuffs';
 import { notifyCureUsed, notifyMasteryLevelUp } from './toast';
 import { CYBERWARE_SLOTS, type CyberwareSlotId } from './cyberware';
-import { dungeonRoomEntryWorld, dungeonExitWorldPosition } from '@/components/game/GameScene';
+import { dungeonRoomEntryWorld, dungeonExitWorldPosition, playerHouseInteriorEntryWorld, playerHouseExitWorldPosition } from '@/components/game/GameScene';
 
 /** Each weapon/Core id owns independent EXP/level. Authoritative for skill
  *  unlocks; persisted with the save slot. Absent id ⇒ fresh progression. */
@@ -262,6 +262,10 @@ interface GameState {
     /** M2D2 #1 — whether the player is inside the edge house (door-threshold
      *  state only; no lock, enemies may enter). Persisted; reset on New Game. */
     inHouse: boolean;
+    /** M2D5 #1 — true while the player is inside their own house interior
+     *  cell. No ownership flag: the house exists from New Game. Persisted;
+     *  reset on New Game. */
+    inPlayerHouse: boolean;
     /** M2D4 #1 — which dungeon room the player is in: 0 = main world, 1..10 =
      *  room, 11 = bossroom. Persisted; reset on New Game. */
     dungeonRoom: number;
@@ -516,6 +520,8 @@ interface GameState {
   acceptQuest: (questId: string) => void;
   completeQuest: (questId: string) => void;
   onEnemyKilled: (enemyName: string, deathId?: string) => void;
+  /** M2D5 #2 F1 — drop dedup ids older than the 5-minute window. */
+  pruneRewardedEnemyDeaths: (now: number) => void;
   checkItemObjectives: () => void;
   checkLocationObjectives: (pos: [number, number, number]) => void;
   setBossState: (boss: GameState['boss']) => void;
@@ -608,8 +614,13 @@ interface GameState {
   markDungeonRoomCleared: (room: number) => void;
   /** M2D4 #2 — mark the dungeon boss defeated (idempotent). */
   defeatBoss: () => void;
+  /** M2D5 #1 — enter the player house: flag + teleport to the interior cell. */
+  enterPlayerHouse: () => void;
+  /** M2D5 #1 — leave the player house: flag + teleport 2 m in front of the door. */
+  exitPlayerHouse: () => void;
+  /** M2D5 #1 — write inPlayerHouse only (fade-sequence mount). */
+  setPlayerHouseInterior: (active: boolean) => void;
   getItemLevel: (itemId: string) => number;
-  isItemSkillUnlocked: (itemId: string, skillIndex: number) => boolean;
   /** Transient skill HUD state (cooldowns/fired flash). */
   reportSkillCooldown: (skillId: string, secondsRemaining: number) => void;
   reportSkillFired: (skillId: string) => void;
@@ -701,6 +712,9 @@ interface PersistedSaveData {
     /** M2D2 #1 — inside the edge house (additive field). Absent reads as
      *  false. SAVE_SCHEMA_VERSION is deliberately NOT bumped. */
     inHouse: boolean;
+    /** M2D5 #1 — inside the player house interior (additive field). Absent
+     *  reads as false. SAVE_SCHEMA_VERSION is deliberately NOT bumped. */
+    inPlayerHouse: boolean;
     /** M2D4 #1 — dungeon state (additive fields). Absent / malformed reads as
      *  0 / 0 / false / []. SAVE_SCHEMA_VERSION is deliberately NOT bumped. */
     dungeonRoom: number;
@@ -1075,6 +1089,9 @@ const ENEMY_KILL_REWARDS: Record<string, { itemId: string; count: number }> = {
   'Mage': { itemId: 'arcane_shard', count: 1 },
 };
 const rewardedEnemyDeaths = new Set<string>();
+/** M2D5 #2 F1 — companion timestamps so the dedup guard can be pruned. */
+const rewardedEnemyDeathTimestamps = new Map<string, number>();
+const REWARDED_ENEMY_DEATH_TTL_MS = 5 * 60 * 1000;
 
 // M2D1 #1c — per-enemy-type loot tables. Keys are the enemy-name strings that
 // actually reach onEnemyKilled at runtime, read off the mount sites: the story
@@ -1180,6 +1197,7 @@ function rollDrops(
 /** Clear the exactly-once reward guard (New Game / Load / menu boundaries). */
 export function clearRewardedEnemyDeaths(): void {
   rewardedEnemyDeaths.clear();
+  rewardedEnemyDeathTimestamps.clear();
 }
 
 /**
@@ -1238,6 +1256,7 @@ export const useGameStore = create<GameState>((set, get) => ({
     hasBytechip: { L: false, R: false },
     worldDrops: [],
     inHouse: false,
+    inPlayerHouse: false,
     dungeonRoom: 0,
     dungeonCheckpointRoom: 0,
     dungeonEntering: false,
@@ -1630,7 +1649,7 @@ export const useGameStore = create<GameState>((set, get) => ({
 
     if (getItemCount(player.      inventory, targetId) <= 0) {
       const def = getItem(targetId);
-      get().addNotification(`No ${def?.name ?? 'item'} left!`);
+      get().addNotification(t('notify.noItemLeft', get().settings.language as Lang, { name: def?.name ?? 'item' }));
       return false;
     }
 
@@ -1651,7 +1670,7 @@ export const useGameStore = create<GameState>((set, get) => ({
       // M2D2 #1 — a cure is its own event: announce the cleanse only after the
       // authoritative cureDebuffs write above succeeded.
       notifyCureUsed(getItem(targetId)?.name ?? targetId);
-      get().addNotification(`Used ${getItem(targetId)?.name ?? 'item'}.`);
+      get().addNotification(t('notify.itemUsed', get().settings.language as Lang, { name: getItem(targetId)?.name ?? 'item' }));
       return true;
     }
 
@@ -1764,7 +1783,7 @@ export const useGameStore = create<GameState>((set, get) => ({
     // P1.5: fail closed for modes whose world cannot launch yet.
     const effectiveMode: WorldMode = worldMode ?? 'story';
     if (!PLAYABLE_WORLD_MODES.includes(effectiveMode)) {
-      get().addNotification(`${effectiveMode.toUpperCase()} world is not yet available.`);
+      get().addNotification(t('notify.worldUnavailable', get().settings.language as Lang, { mode: effectiveMode.toUpperCase() }));
       return false;
     }
     const { settings, hudLayout, saveSlots, activeSlot } = get();
@@ -1823,6 +1842,7 @@ export const useGameStore = create<GameState>((set, get) => ({
         hasBytechip: { L: false, R: false },
         worldDrops: [],
         inHouse: false,
+        inPlayerHouse: false,
         dungeonRoom: 0,
         dungeonCheckpointRoom: 0,
         dungeonEntering: false,
@@ -2148,7 +2168,7 @@ export const useGameStore = create<GameState>((set, get) => ({
         player: { ...state.player, gold: state.player.gold + item.amount },
         lootDrops: state.lootDrops.filter(l => l.id !== id)
       }));
-      get().addNotification(`+${item.amount} Gold Coins`);
+      get().addNotification(t('notify.goldPickup', get().settings.language as Lang, { amount: item.amount }));
     } else {
       const itemId = getItemIdByName(item.name);
       // Arrow Bundle (M1W2D6 #5): restores up to 8 crossbow arrows, capped at
@@ -2160,7 +2180,11 @@ export const useGameStore = create<GameState>((set, get) => ({
           crossbowAmmo: Math.min(16, state.crossbowAmmo + 8),
           lootDrops: state.lootDrops.filter(l => l.id !== id),
         }));
-        get().addNotification(restored > 0 ? `+${restored} arrows` : 'Quiver already full');
+        get().addNotification(
+          restored > 0
+            ? t('notify.arrowsRestored', get().settings.language as Lang, { amount: restored })
+            : t('notify.quiverFull', get().settings.language as Lang),
+        );
         get().checkItemObjectives();
         return;
       }
@@ -2170,7 +2194,7 @@ export const useGameStore = create<GameState>((set, get) => ({
           player: { ...state.player, inventory: updatedInv },
           lootDrops: state.lootDrops.filter(l => l.id !== id)
         }));
-        get().addNotification(`Picked up ${item.name} (x${added})`);
+        get().addNotification(t('notify.itemPickup', get().settings.language as Lang, { name: item.name, amount: added }));
       } else {
         set((state) => ({
           lootDrops: state.lootDrops.filter(l => l.id !== id)
@@ -2407,6 +2431,7 @@ export const useGameStore = create<GameState>((set, get) => ({
     if (deathId !== undefined) {
       if (rewardedEnemyDeaths.has(deathId)) return;
       rewardedEnemyDeaths.add(deathId);
+      rewardedEnemyDeathTimestamps.set(deathId, Date.now());
     }
     // Deterministic material reward through the existing inventory path.
     // Unregistered item ids are rejected by the registry lookup (fail-closed).
@@ -2417,7 +2442,7 @@ export const useGameStore = create<GameState>((set, get) => ({
         const { inv, added } = addItem(get().player.inventory, reward.itemId, reward.count);
         if (added > 0) {
           set((state) => ({ player: { ...state.player, inventory: inv } }));
-          get().addNotification(`🏆 ${enemyName} dropped ${added}x ${def.name}`);
+          get().addNotification(t('notify.enemyDropped', get().settings.language as Lang, { enemy: enemyName, amount: added, name: def.name }));
         }
         // M2D2 #1 — whatever would not fit lands in the world instead.
         const overflow = reward.count - added;
@@ -2445,7 +2470,7 @@ export const useGameStore = create<GameState>((set, get) => ({
             questUpdated = true;
             changed = true;
             const nextAmt = obj.currentAmount + 1;
-            get().addNotification(`🎯 ${quest.title}: ${obj.description} (${nextAmt}/${obj.requiredAmount})`);
+            get().addNotification(t('notify.objectiveProgress', get().settings.language as Lang, { title: quest.title, description: obj.description, current: nextAmt, required: obj.requiredAmount }));
             return { ...obj, currentAmount: nextAmt };
           }
         }
@@ -2524,11 +2549,20 @@ export const useGameStore = create<GameState>((set, get) => ({
     set((state) => {
       const kills = state.arena.killsInCurrentLevel + 1;
       if (kills >= ARENA_KILLS_PER_LEVEL) {
-        get().addNotification(`\u2694\ufe0f Arena Level Up! ${state.arena.level} -> ${state.arena.level + 1}`);
+        get().addNotification(t('notify.arenaLevelUp', get().settings.language as Lang, { from: state.arena.level, to: state.arena.level + 1 }));
         return { arena: { level: state.arena.level + 1, killsInCurrentLevel: 0 } };
       }
       return { arena: { level: state.arena.level, killsInCurrentLevel: kills } };
     });
+  },
+
+  pruneRewardedEnemyDeaths: (now) => {
+    for (const [deathId, at] of rewardedEnemyDeathTimestamps) {
+      if (now - at > REWARDED_ENEMY_DEATH_TTL_MS) {
+        rewardedEnemyDeathTimestamps.delete(deathId);
+        rewardedEnemyDeaths.delete(deathId);
+      }
+    }
   },
 
   checkItemObjectives: () => {
@@ -2596,7 +2630,7 @@ export const useGameStore = create<GameState>((set, get) => ({
           if (distSq <= 25) { // 5m radius
             questUpdated = true;
             changed = true;
-            get().addNotification(`📍 Discovered Location: ${obj.target}!`);
+            get().addNotification(t('notify.locationDiscovered', get().settings.language as Lang, { name: obj.target }));
             return { ...obj, currentAmount: 1 };
           }
         }
@@ -2705,6 +2739,7 @@ export const useGameStore = create<GameState>((set, get) => ({
       hasBytechip,
       worldDrops,
       inHouse,
+      inPlayerHouse,
       dungeonRoom,
       dungeonCheckpointRoom,
       dungeonEntering,
@@ -2745,6 +2780,7 @@ export const useGameStore = create<GameState>((set, get) => ({
         hasBytechip,
         worldDrops,
         inHouse,
+        inPlayerHouse,
         dungeonRoom,
         dungeonCheckpointRoom,
         dungeonEntering,
@@ -2994,6 +3030,8 @@ export const useGameStore = create<GameState>((set, get) => ({
           : [],
         // M2D2 #1 — inside-the-edge-house flag (additive). Absent reads false.
         inHouse: loadedPlayer.inHouse === true,
+        // M2D5 #1 — inside-the-player-house flag (additive). Absent reads false.
+        inPlayerHouse: loadedPlayer.inPlayerHouse === true,
         // M2D4 #1 — dungeon state (additive). Absent / malformed reads as
         // 0 / 0 / false / []; clamps mirror the store's own 0..11 domain.
         dungeonRoom: Math.max(0, Math.min(11, Math.round(safeNumber(loadedPlayer.dungeonRoom, 0)))),
@@ -3076,6 +3114,10 @@ export const useGameStore = create<GameState>((set, get) => ({
         inventory: updatedInv,
       },
     }));
+    // M2D5 #1 — Bytechip ownership is a player flag (player.hasBytechip), not an
+    // inventory concept; buying the implant sets the matching arm's flag.
+    if (itemId === 'bytechip_l') get().setBytechip('L', true);
+    else if (itemId === 'bytechip_r') get().setBytechip('R', true);
     get().addNotification(t('shop.purchased', get().settings.language as Lang, { amount: added, name: getItem(itemId)?.name ?? itemId }));
     get().saveGame();
     return true;
@@ -3116,13 +3158,15 @@ export const useGameStore = create<GameState>((set, get) => ({
         const legacy = nextSlots.helmet ?? nextSlots.chest ?? nextSlots.leggings ?? nextSlots.boots;
         return { player: { ...state.player, equippedArmourSlots: nextSlots, equippedArmour: legacy } };
       });
-      get().addNotification(`Equipped ${def.name}.`);
+      get().addNotification(t('notify.equippedItem', get().settings.language as Lang, { name: def.name }));
       return true;
     }
     const isNeutral = itemId === 'm1887' || itemId === 'resonance_core' || itemId === 'crossbow';
     if (def.type === 'weapon' && !isNeutral && !canUseWeapon(archetype, itemId)) {
       get().addNotification(
-        archetype === 'fighter' ? 'A Fighter cannot wield that.' : 'A Mage cannot wield that.'
+        archetype === 'fighter'
+          ? t('notify.fighterCannotWield', get().settings.language as Lang)
+          : t('notify.mageCannotWield', get().settings.language as Lang),
       );
       return false;
     }
@@ -3134,7 +3178,7 @@ export const useGameStore = create<GameState>((set, get) => ({
     }
     get().setHotbarSlot(idx, itemId);
     get().setSelectedHotbarSlot(idx);
-    get().addNotification(`Equipped ${def.name}`);
+    get().addNotification(t('notify.equipped', get().settings.language as Lang, { name: def.name }));
     return true;
   },
 
@@ -3143,7 +3187,7 @@ export const useGameStore = create<GameState>((set, get) => ({
       const idx = get().hotbar.selectedSlot;
       if (get().hotbar.slots[idx]) {
         get().setHotbarSlot(idx, null);
-        get().addNotification('Weapon unequipped.');
+        get().addNotification(t('notify.weaponUnequipped', get().settings.language as Lang));
       }
       return;
     }
@@ -3152,7 +3196,7 @@ export const useGameStore = create<GameState>((set, get) => ({
       const legacy = nextSlots.helmet ?? nextSlots.chest ?? nextSlots.leggings ?? nextSlots.boots;
       return { player: { ...state.player, equippedArmourSlots: nextSlots, equippedArmour: legacy } };
     });
-    get().addNotification('Armour unequipped.');
+    get().addNotification(t('notify.armourUnequipped', get().settings.language as Lang));
   },
 
   chooseArchetype: (archetype) => {
@@ -3171,7 +3215,9 @@ export const useGameStore = create<GameState>((set, get) => ({
       },
     }));
     get().addNotification(
-      archetype === 'fighter' ? 'You embrace the path of the Fighter.' : 'You embrace the path of the Mage.'
+      archetype === 'fighter'
+        ? t('notify.pathFighter', get().settings.language as Lang)
+        : t('notify.pathMage', get().settings.language as Lang),
     );
     get().saveGame();
   },
@@ -3205,7 +3251,7 @@ export const useGameStore = create<GameState>((set, get) => ({
   useHotbarSlot: (index) => {
     const itemId = get().hotbar.slots[index];
     if (!itemId) {
-      get().addNotification('Empty hotbar slot!');
+      get().addNotification(t('notify.emptyHotbarSlot', get().settings.language as Lang));
       return false;
     }
 
@@ -3215,14 +3261,14 @@ export const useGameStore = create<GameState>((set, get) => ({
     if (def.type === 'consumable') {
       const count = getItemCount(get().player.inventory, itemId);
       if (count <= 0) {
-        get().addNotification('No items left in inventory!');
+        get().addNotification(t('notify.noItemsLeft', get().settings.language as Lang));
         return false;
       }
       return get().useConsumableItem(itemId);
     }
 
     get().setSelectedHotbarSlot(index);
-    get().addNotification(`Equipped ${def.name}`);
+    get().addNotification(t('notify.equipped', get().settings.language as Lang, { name: def.name }));
     return true;
   },
 
@@ -3232,14 +3278,18 @@ export const useGameStore = create<GameState>((set, get) => ({
       cheat: { ...state.cheat, godMode: !state.cheat.godMode, active: true },
     }));
     const isNowOn = get().cheat.godMode;
-    get().addNotification(isNowOn ? '🛡️ God Mode ON' : '🛡️ God Mode OFF');
+    get().addNotification(
+      isNowOn
+        ? t('notify.godModeOn', get().settings.language as Lang)
+        : t('notify.godModeOff', get().settings.language as Lang),
+    );
   },
 
   grantGold: (amount) => {
     set((state) => ({
       player: { ...state.player, gold: state.player.gold + amount },
     }));
-    get().addNotification(`💰 +${amount} Gold (cheat)`);
+    get().addNotification(t('notify.cheatGold', get().settings.language as Lang, { amount }));
     get().saveGame();
   },
 
@@ -3248,20 +3298,20 @@ export const useGameStore = create<GameState>((set, get) => ({
     if (!def) return false;
     const { inv, added } = addItem(get().player.inventory, itemId, count);
     if (added <= 0) {
-      get().addNotification('Inventory full!');
+      get().addNotification(t('notify.inventoryFull', get().settings.language as Lang));
       return false;
     }
     set((state) => ({
       player: { ...state.player, inventory: inv },
     }));
-    get().addNotification(`🎁 +${added} ${def.name} (cheat)`);
+    get().addNotification(t('notify.cheatGiveItem', get().settings.language as Lang, { amount: added, name: def.name }));
     get().saveGame();
     return true;
   },
 
   grantExp: (amount) => {
     get().addExp(amount);
-    get().addNotification(`✨ +${amount} EXP (cheat)`);
+    get().addNotification(t('notify.cheatExp', get().settings.language as Lang, { amount }));
   },
 
   addMasteryExp: (itemId, amount) => {
@@ -3590,6 +3640,25 @@ export const useGameStore = create<GameState>((set, get) => ({
   setDungeonEntering: (active) => set((state) => ({
     player: { ...state.player, dungeonEntering: active },
   })),
+  // M2D5 #1 — player house. Mirrors the dungeon entry/exit pair: the position
+  // is written here and GameScene's existing fade relocates the Rapier body.
+  enterPlayerHouse: () => set((state) => ({
+    player: {
+      ...state.player,
+      inPlayerHouse: true,
+      position: playerHouseInteriorEntryWorld(),
+    },
+  })),
+  exitPlayerHouse: () => set((state) => ({
+    player: {
+      ...state.player,
+      inPlayerHouse: false,
+      position: playerHouseExitWorldPosition(),
+    },
+  })),
+  setPlayerHouseInterior: (active) => set((state) => ({
+    player: { ...state.player, inPlayerHouse: active },
+  })),
   markDungeonRoomCleared: (room) => set((state) => (
     state.player.dungeonRoomCleared.includes(room)
       ? {}
@@ -3613,14 +3682,11 @@ export const useGameStore = create<GameState>((set, get) => ({
       },
     }));
     if (leveledTo > current.level) {
-      get().addNotification(`⬆️ ${getItem(itemId)?.name ?? itemId} reached Lv.${leveledTo}`);
+      get().addNotification(t('notify.masteryLevelUp', get().settings.language as Lang, { name: getItem(itemId)?.name ?? itemId, level: leveledTo }));
     }
   },
 
   getItemLevel: (itemId) => get().player.itemProgression[itemId]?.level ?? 1,
-
-  isItemSkillUnlocked: (itemId, skillIndex) =>
-    isSkillUnlocked(get().player.itemProgression[itemId]?.level ?? 1, skillIndex),
 
   // Transient skill HUD feedback — written by Player.tsx when a skill fires
   // or ticks down; the skill bar reads these instead of owning its own state.
@@ -3641,14 +3707,14 @@ export const useGameStore = create<GameState>((set, get) => ({
     set((state) => ({
       player: { ...state.player, position: [0, 1, -20] },
     }));
-    get().addNotification('🌀 Teleported to Trial Arena');
+    get().addNotification(t('notify.teleportTrialArena', get().settings.language as Lang));
   },
 
   teleportToForge: () => {
     set((state) => ({
       player: { ...state.player, position: [15, 1, 5] },
     }));
-    get().addNotification('🌀 Teleported to Forge');
+    get().addNotification(t('notify.teleportForge', get().settings.language as Lang));
   },
 
   setChatOpen: (open) => set((state) => ({
@@ -3769,6 +3835,8 @@ export const useGameStore = create<GameState>((set, get) => ({
   },
 
   openShop: (npcId) => {
+    // M2D5 #1 — point the one existing shop render at this NPC's inventory.
+    setShopInventory(npcId);
     set((state) => ({
       ui: { ...state.ui, showShop: true, shopNpcId: npcId, interactPrompt: null, nearestNpcId: null },
       activeDialogue: null,

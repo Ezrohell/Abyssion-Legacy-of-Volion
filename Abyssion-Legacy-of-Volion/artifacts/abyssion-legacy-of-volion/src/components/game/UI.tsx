@@ -9,7 +9,7 @@ import { SWORD_SKILLS, SWORD_SKILL_COOLDOWNS } from '@/lib/swordSkills';
 import { WATER_STAFF_SKILLS, SKILL_COOLDOWNS as STAFF_SKILL_COOLDOWNS } from '@/lib/staffSkills';
 import { M1887_SKILLS, DAGGER_SKILLS, M1887_SKILL_COOLDOWNS, DAGGER_SKILL_COOLDOWNS, RESONANCE_SKILLS, RESONANCE_SKILL_COOLDOWNS } from '@/lib/weaponContent';
 import { CROSSBOW_SKILLS, CROSSBOW_CONFIG, CROSSBOW_SKILL_COOLDOWNS } from '@/lib/crossbowContent';
-import { SKILL_UNLOCK_LEVELS, masteryLevelFor, isSkillUnlockedForWeapon, WEAPON_SKILL_UNLOCK_LEVELS, type SkillSlot } from '@/lib/progression';
+import { masteryLevelFor, isSkillUnlockedForWeapon, WEAPON_SKILL_UNLOCK_LEVELS, type SkillSlot } from '@/lib/progression';
 import { getItemCount } from '@/lib/inventory';
 import { useEffect, useRef, useState, useCallback } from 'react';
 import { t } from '@/lib/translations';
@@ -98,7 +98,6 @@ type SkillTipData = SkillTipDetail & { slotKey: string; locked: boolean; require
 export function SkillBar({ preview = false, slot, showAmmo = false }: { preview?: boolean; slot?: SkillSlotKey; showAmmo?: boolean } = {}) {
   const hotbar = useGameStore((s) => s.hotbar);
   const archetype = useGameStore((s) => s.player.archetype);
-  const isItemSkillUnlocked = useGameStore((s) => s.isItemSkillUnlocked);
   const skillState = useGameStore((s) => s.skillState);
   const gunAmmo = useGameStore((s) => s.gunAmmo);
   const crossbowAmmo = useGameStore((s) => s.crossbowAmmo);
@@ -223,13 +222,12 @@ export function SkillBar({ preview = false, slot, showAmmo = false }: { preview?
     if (tipTimer.current) clearTimeout(tipTimer.current);
     tipTimer.current = setTimeout(() => setTip(null), 3000);
   };
-  const openTip = (skId: string, skKey: string, actionIndex: number | null, unlocked: boolean) => {
+  const openTip = (skId: string, skKey: string, actionIndex: number | null, locked: boolean) => {
     if (!itemId || !skId) return;
     const detail = skillDetailFor(itemId, skId);
     if (!detail) return;
-    const index = actionIndex ?? 0;
-    const requiredLevel = SKILL_UNLOCK_LEVELS[Math.min(index, SKILL_UNLOCK_LEVELS.length - 1)] ?? 1;
-    setTip({ ...detail, slotKey: skKey, locked: !unlocked, requiredLevel });
+    const requiredLevel = WEAPON_SKILL_UNLOCK_LEVELS[itemId]?.[skKey as SkillSlot] ?? 1;
+    setTip({ ...detail, slotKey: skKey, locked, requiredLevel });
     armTipTimeout();
   };
   useEffect(() => () => {
@@ -279,17 +277,16 @@ export function SkillBar({ preview = false, slot, showAmmo = false }: { preview?
     <div className="relative flex items-center gap-2" style={{ pointerEvents: 'none' }}>
       {rows.map((sk) => {
         const hasSkill = sk.actionIndex !== null && itemId !== null;
-        const unlocked = hasSkill && itemId !== null ? isItemSkillUnlocked(itemId, sk.actionIndex as number) : false;
         // Cooldown comes from the transient gameplay feedback state, so the
         // bar can never show a skill as ready while gameplay still blocks it.
         const cd = sk.id ? (skillState.cooldowns[sk.id] ?? 0) : 0;
-        const interactive = hasSkill && unlocked;
         // M2D2 #1 (F) — mastery-gated lock. Only a slot that HAS a threshold in
         // WEAPON_SKILL_UNLOCK_LEVELS can ever be locked; a missing entry means
         // "unlocked at any mastery level" (the table is empty at HEAD).
         const requiredMastery = itemId !== null ? WEAPON_SKILL_UNLOCK_LEVELS[itemId]?.[sk.key as SkillSlot] : undefined;
         const masteryLocked = hasSkill && itemId !== null && requiredMastery !== undefined
           && !isSkillUnlockedForWeapon(itemId, sk.key as SkillSlot, masteryLevel);
+        const interactive = hasSkill && !masteryLocked;
         // M1W4D1 #3 C4 — the skill NAME is gone from the HUD (it overlapped);
         // the slot shows key + icon + cooldown + locked dim. Real skill slots
         // (locked included) accept pointer events so the hover/long-press
@@ -301,7 +298,7 @@ export function SkillBar({ preview = false, slot, showAmmo = false }: { preview?
             key={sk.key}
             type="button"
             aria-disabled={!interactive}
-            onPointerEnter={(e) => { if (e.pointerType !== 'touch') openTip(sk.id, sk.key, sk.actionIndex, unlocked); }}
+            onPointerEnter={(e) => { if (e.pointerType !== 'touch') openTip(sk.id, sk.key, sk.actionIndex, masteryLocked); }}
             onPointerLeave={closeTip}
             onPointerMove={(e) => {
               if (tip) armTipTimeout();
@@ -317,7 +314,7 @@ export function SkillBar({ preview = false, slot, showAmmo = false }: { preview?
                 clearPressTimer();
                 pressTimer.current = setTimeout(() => {
                   pressTimer.current = null;
-                  openTip(sk.id, sk.key, sk.actionIndex, unlocked);
+                  openTip(sk.id, sk.key, sk.actionIndex, masteryLocked);
                 }, 400);
               }
             }}
@@ -325,14 +322,14 @@ export function SkillBar({ preview = false, slot, showAmmo = false }: { preview?
             onPointerCancel={() => { clearPressTimer(); closeTip(); }}
             className={`relative flex items-center gap-2 border px-3 py-1.5 ${masteryLocked ? 'opacity-50' : ''} ${canHover ? 'pointer-events-auto' : 'pointer-events-none'} ${interactive && !preview ? 'cursor-pointer active:bg-white/10' : 'cursor-default'}`}
             style={{
-              background: !hasSkill ? 'rgba(10,10,10,0.4)' : unlocked ? 'rgba(20,16,8,0.85)' : 'rgba(10,10,10,0.7)',
-              borderColor: !hasSkill ? 'rgba(90,90,90,0.2)' : unlocked ? 'rgba(214,138,49,0.55)' : 'rgba(120,120,120,0.25)',
-              opacity: masteryLocked ? 0.5 : !hasSkill ? 0.4 : unlocked ? 1 : 0.55,
+              background: !hasSkill ? 'rgba(10,10,10,0.4)' : !masteryLocked ? 'rgba(20,16,8,0.85)' : 'rgba(10,10,10,0.7)',
+              borderColor: !hasSkill ? 'rgba(90,90,90,0.2)' : !masteryLocked ? 'rgba(214,138,49,0.55)' : 'rgba(120,120,120,0.25)',
+              opacity: masteryLocked ? 0.5 : !hasSkill ? 0.4 : !masteryLocked ? 1 : 0.55,
             }}
           >
-            <span className="text-sm font-black" style={{ color: unlocked ? '#e8d5ae' : '#777' }}>{sk.key}</span>
+            <span className="text-sm font-black" style={{ color: !masteryLocked ? '#e8d5ae' : '#777' }}>{sk.key}</span>
             {hasSkill ? (
-              <Glyph size={16} style={{ color: unlocked ? '#d68a31' : '#666' }} />
+              <Glyph size={16} style={{ color: !masteryLocked ? '#d68a31' : '#666' }} />
             ) : (
               <span className="text-xs font-semibold" style={{ color: '#555' }}>—</span>
             )}
@@ -374,7 +371,7 @@ export function SkillBar({ preview = false, slot, showAmmo = false }: { preview?
           </div>
           <div className="mt-1 text-[11px]" style={{ color: '#a89878' }}>{tip.description ?? '—'}</div>
           <div className="mt-1 text-[11px] font-semibold" style={{ color: tip.locked ? '#f87171' : '#22c55e' }}>
-            {tip.locked ? `Locked: level ${tip.requiredLevel} required` : 'Unlocked'}
+            {tip.locked ? `Locked: mastery level ${tip.requiredLevel} required` : 'Unlocked'}
           </div>
         </div>
       )}

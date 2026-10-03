@@ -49,6 +49,9 @@ export default function FireMageEnemy({ position }: EnemyProps) {
   const idRef = useRef(`fire_${Math.random().toString(36).slice(2, 9)}`);
   const currentPosRef = useRef(new THREE.Vector3(position[0], position[1], position[2]));
   const [projectiles, setProjectiles] = useState<Projectile[]>([]);
+  // M2D5 #2 F4 — meshes are moved imperatively; state is written only when a
+  // projectile is added/removed, never for pure movement.
+  const projectileMeshRefs = useRef<Map<string, THREE.Mesh>>(new Map());
   const castTimerRef = useRef(0);
   const isCastingRef = useRef(false);
   const sunburnTimerRef = useRef(0);
@@ -110,32 +113,45 @@ export default function FireMageEnemy({ position }: EnemyProps) {
     }
 
     if (projectiles.length === 0) return;
-    setProjectiles((prev) => {
-      const pp = useGameStore.getState().player.position;
-      _playerPos.set(pp[0], pp[1] + 1.0, pp[2]);
-      const next: Projectile[] = [];
-      for (const p of prev) {
-        p.life -= delta;
-        p.pos.addScaledVector(p.dir, p.speed * delta);
-        if (p.pos.distanceTo(_playerPos) <= 2.0) {
-          const hitTaken = useGameStore.getState().damagePlayer(config.damage);
-          if (hitTaken) {
-            if (sunburnTimerRef.current <= 0) {
-              useGameStore.getState().applyDebuff('poison', 1, 5);
-              sunburnTimerRef.current = SUNBURN_INTERVAL;
-            }
-            if (playerRigidBodyRef.current) {
-              const kb = _kbDir.copy(_playerPos).sub(p.pos).setY(0).normalize();
-              guardedPlayerImpulse({ x: kb.x * config.knockback, y: 3, z: kb.z * config.knockback });
-            }
+    const pp = useGameStore.getState().player.position;
+    _playerPos.set(pp[0], pp[1] + 1.0, pp[2]);
+    let changed = false;
+    const survivors: Projectile[] = [];
+    for (const p of projectiles) {
+      p.life -= delta;
+      p.pos.addScaledVector(p.dir, p.speed * delta);
+      if (p.pos.distanceTo(_playerPos) <= 2.0) {
+        const hitTaken = useGameStore.getState().damagePlayer(config.damage);
+        if (hitTaken) {
+          if (sunburnTimerRef.current <= 0) {
+            useGameStore.getState().applyDebuff('poison', 1, 5);
+            sunburnTimerRef.current = SUNBURN_INTERVAL;
           }
-          continue;
+          if (playerRigidBodyRef.current) {
+            const kb = _kbDir.copy(_playerPos).sub(p.pos).setY(0).normalize();
+            guardedPlayerImpulse({ x: kb.x * config.knockback, y: 3, z: kb.z * config.knockback });
+          }
         }
-        if (p.life <= 0 || p.pos.y <= 0.2) continue;
-        next.push(p);
+        changed = true;
+        continue;
       }
-      return next;
-    });
+      if (p.life <= 0 || p.pos.y <= 0.2) {
+        changed = true;
+        continue;
+      }
+      survivors.push(p);
+      // F4 — move the mounted mesh directly instead of re-rendering.
+      const mesh = projectileMeshRefs.current.get(p.id);
+      if (mesh) {
+        mesh.position.set(
+          p.pos.x - currentPosRef.current.x,
+          p.pos.y - currentPosRef.current.y,
+          p.pos.z - currentPosRef.current.z,
+        );
+      }
+    }
+    // F4 — React state only when a projectile leaves the list.
+    if (changed) setProjectiles(survivors);
   });
 
   const handleCustomUpdate = (ctx: EnemyContext, delta: number): boolean => {
@@ -227,6 +243,10 @@ export default function FireMageEnemy({ position }: EnemyProps) {
       {projectiles.map((p) => (
         <mesh
           key={p.id}
+          ref={(m) => {
+            if (m) projectileMeshRefs.current.set(p.id, m);
+            else projectileMeshRefs.current.delete(p.id);
+          }}
           position={[
             p.pos.x - currentPosRef.current.x,
             p.pos.y - currentPosRef.current.y,

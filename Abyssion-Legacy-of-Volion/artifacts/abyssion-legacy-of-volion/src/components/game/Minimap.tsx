@@ -47,6 +47,9 @@ export default function Minimap({ size = 128, markers = [], onOpenExpanded }: Mi
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   // Player position is a [x, y, z] tuple in the authoritative store.
   const pos = useGameStore(s => s.player.position);
+  // M2D5 #1 — the player-house interior renders a signal-loss state instead of
+  // the map. Only this flag triggers it (not the dungeon, not the edge house).
+  const inPlayerHouse = useGameStore(s => s.player.inPlayerHouse);
   const px = pos[0];
   const pz = pos[2];
 
@@ -79,8 +82,30 @@ export default function Minimap({ size = 128, markers = [], onOpenExpanded }: Mi
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ctx.clearRect(0, 0, size, size);
 
-    // Ground disc: medieval parchment-toned terrain with an iron ring frame.
     const r = size / 2;
+    // M2D5 #1 — GTA-style signal loss while inside the player house: static
+    // noise over the frame, "SIGNAL LOST" centred, and no map behind it.
+    if (inPlayerHouse) {
+      ctx.fillStyle = '#0a0a0a';
+      ctx.fillRect(0, 0, size, size);
+      for (let i = 0; i < 1400; i += 1) {
+        const nx = Math.random() * size;
+        const ny = Math.random() * size;
+        const g = Math.round(40 + Math.random() * 120);
+        ctx.fillStyle = `rgba(${g}, ${g}, ${g}, ${0.25 + Math.random() * 0.4})`;
+        ctx.fillRect(nx, ny, 2, 2);
+      }
+      ctx.fillStyle = 'rgba(240, 230, 200, 0.95)';
+      ctx.font = 'bold 12px sans-serif';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText('SIGNAL LOST', r, r);
+      ctx.textAlign = 'start';
+      ctx.textBaseline = 'alphabetic';
+      return;
+    }
+
+    // Ground disc: medieval parchment-toned terrain with an iron ring frame.
     ctx.beginPath();
     ctx.arc(r, r, r - 2, 0, Math.PI * 2);
     ctx.fillStyle = 'rgba(24, 28, 22, 0.78)';
@@ -141,7 +166,7 @@ export default function Minimap({ size = 128, markers = [], onOpenExpanded }: Mi
     ctx.lineWidth = 1;
     ctx.strokeStyle = 'rgba(0,0,0,0.6)';
     ctx.stroke();
-  }, [player.mx, player.my, mappedMarkers, size]);
+  }, [player.mx, player.my, mappedMarkers, size, inPlayerHouse]);
 
   return (
     <div

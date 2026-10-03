@@ -6,11 +6,20 @@ import { getItem } from '@/lib/items';
 import { useTranslation } from '@/lib/useTranslation';
 import { X, ShoppingCart } from 'lucide-react';
 
+/** M2D5 #2 — per-NPC shop titles keyed by the shop's NPC id. NPCs without an
+ *  entry (Marcus and any unknown id) fall back to the original label. */
+const SHOP_TITLES: Record<string, string> = {
+  npc_johnny: "Johnny's Cyberware",
+  npc_jimny: "Jimny's Rig Supplies",
+};
+
 export default function ShopModal() {
   const { ui, closeShop, purchaseShopItem, player } = useGameStore();
   const { tl } = useTranslation();
 
   if (!ui.showShop) return null;
+
+  const shopTitle = (ui.shopNpcId && SHOP_TITLES[ui.shopNpcId]) || tl('shop.title');
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black backdrop-blur-sm p-4">
@@ -19,7 +28,7 @@ export default function ShopModal() {
         <div className="p-4 border-b border-gray-800 flex justify-between items-center bg-gray-950">
           <div className="flex items-center gap-2">
             <ShoppingCart size={18} className="text-amber-400" />
-            <h2 className="text-lg font-bold text-white tracking-wider">{tl('shop.title')}</h2>
+            <h2 className="text-lg font-bold text-white tracking-wider">{shopTitle}</h2>
           </div>
           <div className="flex items-center gap-3">
             <span className="text-xs font-bold text-yellow-400">🪙 {player.gold}</span>
