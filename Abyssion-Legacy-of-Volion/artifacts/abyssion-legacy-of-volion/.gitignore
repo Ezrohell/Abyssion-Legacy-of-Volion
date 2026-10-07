@@ -1,7 +1,0 @@
-*.before-*
-
-node_modules/
-dist/
-*.before-*
-.env
-.env.*

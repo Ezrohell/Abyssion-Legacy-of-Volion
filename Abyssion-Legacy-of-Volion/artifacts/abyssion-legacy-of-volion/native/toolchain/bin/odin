@@ -1,0 +1,15 @@
+#!/bin/sh
+# Project-local Odin driver, matching the zig-cc/zig-cxx wrapper convention.
+#
+# Odin shells out to a C compiler to link. Its default is `clang`, which this
+# host does not have, and that produces:
+#     Could not spawn subprocess: No such file or directory
+# so the shim directory (cc/gcc/clang -> ../bin/zig-cc) is put on PATH for the
+# Odin process only. The result is a fully project-local toolchain: the
+# approved Zig compiler is the C compiler and linker for every build, exactly
+# as docs/LANGUAGE_POLICY.md describes.
+#
+# Usage: native/toolchain/bin/odin build <dir> -out:<binary>
+PATH="$(dirname "$0")/../shim:$PATH"
+export PATH
+exec "$(dirname "$0")/../odin/odin" "$@"

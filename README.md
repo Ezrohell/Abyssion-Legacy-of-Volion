@@ -1,5 +1,17 @@
 # Abyssion: Legacy of Volion
 
+> **Status: the JavaScript/TypeScript web pipeline has been removed.** The text below documents
+> the retired browser build (React + React Three Fiber + Rapier + Vite + shadcn/ui). Those
+> sources, the pnpm workspace packages (`artifacts/api-server`, `artifacts/mockup-sandbox`,
+> `lib/*`, `scripts/`, `tmp/`) and their configuration no longer exist in this repository; the
+> section is kept only as the historical migration reference. The authoritative language policy
+> is `Abyssion-Legacy-of-Volion/artifacts/abyssion-legacy-of-volion/docs/LANGUAGE_POLICY.md`,
+> and the project is now native: C/C++ implementation, C at the ABI boundary, Rust for
+> memory-safe subsystems, and a project-local Zig toolchain under
+> `Abyssion-Legacy-of-Volion/artifacts/abyssion-legacy-of-volion/native/toolchain/` (which also
+> now carries the project-local Odin toolchain). The removed web sources are archived outside
+> the repository at `/home/daytona/archives/abyssion-web-2026-10-07/`.
+
 A browser-playable action RPG built with React, React Three Fiber and Rapier, in which the
 world, characters, weapons, enemies and HUD are all assembled from procedural Three.js
 primitives — there are no imported models, no skinned meshes and no animation clips, so every

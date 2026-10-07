@@ -1,7 +1,21 @@
 # Large untracked trees excluded from the v.M2 pre-investor freeze (M1W4 R1).
 
-# 52 MB C++/SDL/Rust prototype - not part of the deliverable.
-native/
+# Legacy native prototype (52 MB C++/SDL/Rust) at the workspace root: still
+# not part of the deliverable.
+/Abyssion-Legacy-of-Volion/native/
+
+# Native payloads: generated build output, vendored third-party trees, and
+# downloaded toolchain archives/binaries. The rest of each native/ tree is
+# source and is tracked (native-only pivot).
+**/native/build/
+**/native/third_party/
+**/native/toolchain/zig/
+**/native/toolchain/odin/
+**/native/toolchain/*.tar.gz
+**/native/toolchain/*.tar.xz
+**/native/wasm/out/
+**/native/wasm/*.log
+imgui.ini
 
 # Pre-flatten .git backup. The directory on disk is named ".git.bak-flatten";
 # the ".git-bak-flatten" spelling is retained as well so both forms stay ignored.

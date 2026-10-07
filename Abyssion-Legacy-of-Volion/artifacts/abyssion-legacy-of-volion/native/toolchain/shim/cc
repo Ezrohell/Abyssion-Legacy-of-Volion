@@ -1,0 +1,2 @@
+#!/bin/sh
+exec "/home/daytona/codebase/Abyssion-Legacy-of-Volion/artifacts/abyssion-legacy-of-volion/native/toolchain/bin/zig-cc" "$@"
