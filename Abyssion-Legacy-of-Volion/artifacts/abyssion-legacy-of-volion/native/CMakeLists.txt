@@ -130,6 +130,12 @@ target_include_directories(abyssion_imgui PUBLIC
 add_executable(abyssion_native src/main.cpp)
 target_link_libraries(abyssion_native PRIVATE SDL3::SDL3-static abyssion_stb abyssion_imgui abyssion_mixer)
 
+# Window and frame loop are embedded in src/main.cpp. The default entry point
+# opens the SDL3 window and runs the frame loop. The existing seven-line smoke
+# output is preserved under the --smoke flag so the headless probe path stays
+# runnable without a display.
+target_compile_options(abyssion_native PRIVATE -DBABSION_NATIVE_WINDOW=1)
+
 # --- Math library (M2D6 #2 batch 2) -----------------------------------------
 # Self-contained C++17 math library: vectors, matrices, quaternions. It links
 # nothing and includes nothing from third_party/, so the renderer and physics

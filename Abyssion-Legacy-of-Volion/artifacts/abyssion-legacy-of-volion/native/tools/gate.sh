@@ -38,7 +38,7 @@ run() {
 
 run cmake-configure cmake -S . -B build -G Ninja
 run cmake-build     cmake --build build -j 4
-run smoke           ./build/abyssion_native
+run smoke           ./build/abyssion_native --smoke
 run math-selftest   ./build/math_selftest
 run ctest           ctest --test-dir build --output-on-failure
 
