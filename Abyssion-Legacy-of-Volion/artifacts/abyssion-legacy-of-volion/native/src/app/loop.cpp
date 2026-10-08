@@ -4,8 +4,9 @@
 
 namespace abyssion { namespace app {
 
-int run_loop(Display &display, double max_seconds) {
+int run_loop(Display &display, double max_seconds, const char *dump_path) {
     bool quit = false;
+    bool dumped = false;
     int64_t prev_counter = SDL_GetPerformanceCounter();
 
     // Visible content: a filled rectangle that advances across the window at a
@@ -87,6 +88,53 @@ int run_loop(Display &display, double max_seconds) {
                              SDL_GetError());
                 quit = true;
                 continue;
+            }
+
+            // --dump: after the first frame is presented, read the current
+            // render target back with SDL_RenderReadPixels, hold it as an
+            // SDL_PIXELFORMAT_ARGB8888 surface and write it with
+            // SDL_SaveBMP, so the window is captured without any external
+            // screenshot tool. The process then leaves; dump failure
+            // returns 1.
+            if (dump_path != nullptr && !dumped) {
+                SDL_Surface *read_back =
+                    SDL_RenderReadPixels(display.renderer, nullptr);
+                if (read_back == nullptr) {
+                    std::fprintf(stderr, "SDL_RenderReadPixels failed: %s\n",
+                                 SDL_GetError());
+                    return 1;
+                }
+                SDL_Surface *frame = read_back;
+                if (read_back->format != SDL_PIXELFORMAT_ARGB8888) {
+                    frame = SDL_ConvertSurface(read_back,
+                                               SDL_PIXELFORMAT_ARGB8888);
+                    if (frame == nullptr) {
+                        std::fprintf(stderr,
+                                     "SDL_ConvertSurface failed: %s\n",
+                                     SDL_GetError());
+                        SDL_DestroySurface(read_back);
+                        return 1;
+                    }
+                }
+                bool dump_ok = true;
+                if (SDL_SaveBMP(frame, dump_path) == false) {
+                    std::fprintf(stderr, "SDL_SaveBMP failed: %s\n",
+                                 SDL_GetError());
+                    dump_ok = false;
+                } else {
+                    std::fprintf(stderr,
+                                 "Abyssion native: dumped frame to %s\n",
+                                 dump_path);
+                }
+                if (frame != read_back) {
+                    SDL_DestroySurface(frame);
+                }
+                SDL_DestroySurface(read_back);
+                if (dump_ok == false) {
+                    return 1;
+                }
+                dumped = true;
+                quit = true;
             }
         }
     }

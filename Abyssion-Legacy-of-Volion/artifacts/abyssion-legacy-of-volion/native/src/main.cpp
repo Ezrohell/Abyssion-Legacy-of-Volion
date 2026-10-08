@@ -13,6 +13,7 @@ int main(int argc, char **argv) {
 #ifdef BABSION_NATIVE_WINDOW
     bool window_mode = false;
     int preview_seconds = 0;
+    const char *dump_path = nullptr;
     for (int i = 1; i < argc; ++i) {
         if (argv[i] == std::string("--window")) {
             window_mode = true;
@@ -42,6 +43,18 @@ int main(int argc, char **argv) {
             window_mode = true;
             break;
         }
+        if (argv[i] == std::string("--dump")) {
+            if (i + 1 >= argc) {
+                std::fprintf(stderr,
+                             "Abyssion native skeleton: --dump needs a file "
+                             "path\n");
+                SDL_Quit();
+                return 1;
+            }
+            dump_path = argv[i + 1];
+            window_mode = true;
+            break;
+        }
     }
 
     if (window_mode) {
@@ -52,15 +65,15 @@ int main(int argc, char **argv) {
             return 1;
         }
         const int loop_exit =
-            abyssion::app::run_loop(display, preview_seconds);
+            abyssion::app::run_loop(display, preview_seconds, dump_path);
         abyssion::app::destroy_display(display);
         SDL_Quit();
         return loop_exit;
     }
 
     std::fprintf(stderr,
-                 "Abyssion native skeleton: use --smoke, --window or "
-                 "--preview <seconds>\n");
+                 "Abyssion native skeleton: use --smoke, --window, "
+                 "--preview <seconds> or --dump <path>\n");
     SDL_Quit();
     return 1;
 #else

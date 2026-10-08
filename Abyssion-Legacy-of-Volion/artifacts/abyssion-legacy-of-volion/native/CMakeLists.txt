@@ -158,26 +158,3 @@ target_link_libraries(math_selftest PRIVATE abyssion_math)
 
 enable_testing()
 add_test(NAME math_selftest COMMAND math_selftest)
-
-# Temporary diagnostic target: build the baseline smoke path unchanged so we can
-# compare its --smoke behaviour against the modular smoke path byte-for-byte.
-add_executable(baseline_smoke /tmp/baseline/main.cpp)
-target_include_directories(baseline_smoke PRIVATE
-    ${CMAKE_CURRENT_SOURCE_DIR}/third_party/imgui
-    ${CMAKE_CURRENT_SOURCE_DIR}/third_party/SDL/include
-    ${CMAKE_CURRENT_SOURCE_DIR}/third_party/SDL_mixer/include
-    ${CMAKE_CURRENT_SOURCE_DIR}/third_party/stb)
-target_compile_options(baseline_smoke PRIVATE -DBABSION_NATIVE_WINDOW=1)
-target_link_libraries(baseline_smoke PRIVATE SDL3::SDL3-static abyssion_stb abyssion_imgui abyssion_mixer)
-
-# Temporary diagnostic: inspect the headless ImGui draw-data stats in this
-# build exactly as the smoke path sees them, so the smoke rewrite can target
-# the real cause instead of guessing.
-add_executable(smoke_diag /tmp/smoke_diag.cpp)
-target_include_directories(smoke_diag PRIVATE
-    ${CMAKE_CURRENT_SOURCE_DIR}/src/app
-    ${CMAKE_CURRENT_SOURCE_DIR}/third_party/imgui
-    ${CMAKE_CURRENT_SOURCE_DIR}/third_party/SDL/include
-    ${CMAKE_CURRENT_SOURCE_DIR}/third_party/SDL_mixer/include
-    ${CMAKE_CURRENT_SOURCE_DIR}/third_party/stb)
-target_link_libraries(smoke_diag PRIVATE SDL3::SDL3-static abyssion_stb abyssion_imgui abyssion_mixer)
