@@ -1,82 +1,60 @@
 # Abyssion: Legacy of Volion
 
-> **Status: the JavaScript/TypeScript web pipeline has been removed.** The text below documents
-> the retired browser build (React + React Three Fiber + Rapier + Vite + shadcn/ui). Those
-> sources, the pnpm workspace packages (`artifacts/api-server`, `artifacts/mockup-sandbox`,
-> `lib/*`, `scripts/`, `tmp/`) and their configuration no longer exist in this repository; the
-> section is kept only as the historical migration reference. The authoritative language policy
-> is `Abyssion-Legacy-of-Volion/artifacts/abyssion-legacy-of-volion/docs/LANGUAGE_POLICY.md`,
-> and the project is now native: C/C++ implementation, C at the ABI boundary, Rust for
+> **Status: native-only.** The JavaScript/TypeScript web pipeline has been removed. The
+> project is now a native application: C/C++ implementation, C at the ABI boundary, Rust for
 > memory-safe subsystems, and a project-local Zig toolchain under
-> `Abyssion-Legacy-of-Volion/artifacts/abyssion-legacy-of-volion/native/toolchain/` (which also
-> now carries the project-local Odin toolchain). The removed web sources are archived outside
-> the repository at `/home/daytona/archives/abyssion-web-2026-10-07/`.
+> `Abyssion-Legacy-of-Volion/artifacts/abyssion-legacy-of-volion/native/toolchain/`, which also
+> carries the project-local Odin toolchain. The removed web sources are archived outside the
+> repository at `/home/daytona/archives/abyssion-web-2026-10-07/`. The authoritative language
+> policy is
+> `Abyssion-Legacy-of-Volion/artifacts/abyssion-legacy-of-volion/docs/LANGUAGE_POLICY.md`.
 
-A browser-playable action RPG built with React, React Three Fiber and Rapier, in which the
-world, characters, weapons, enemies and HUD are all assembled from procedural Three.js
-primitives — there are no imported models, no skinned meshes and no animation clips, so every
-pose and every swing is a per-frame transform write. A single Zustand store is the
-authoritative gameplay state and also carries the save/global-settings contract. The current
-build is a vertical slice: Village Haven, the Dangerous Territory enemy band, the trial arena,
-six weapons (iron sword, dual daggers, M1887, crossbow, water staff, resonance core), a
-Fighter/Mage archetype system with five skills per weapon, checkpoints and respawn, loot drops,
-quests and dialogue, an in-game HUD editor, a 30-real-minute day cycle with zone-based fog, and
-ambient wildlife.
+An indie action RPG in active development. The retired browser build was a vertical slice
+(Village Haven, the Dangerous Territory enemy band, the trial arena, six weapons — iron sword,
+dual daggers, M1887, crossbow, water staff, resonance core — a Fighter/Mage archetype system
+with five skills per weapon, checkpoints and respawn, loot drops, quests and dialogue, an
+in-game HUD editor, a 30-real-minute day cycle with zone-based fog, and ambient wildlife).
+That implementation used React, React Three Fiber and Rapier, with the world, characters,
+weapons, enemies and HUD assembled entirely from procedural Three.js primitives — no imported
+models, no skinned meshes, no animation clips, so every pose and every swing was a per-frame
+transform write. A single Zustand store was the authoritative gameplay state and carried the
+save/global-settings contract. This section is kept only as a historical migration reference.
+
+The project is now native-only. See `native/` for the C++/SDL prototype and CMake build output.
+The removed web sources are archived outside the repository at
+`/home/daytona/archives/abyssion-web-2026-10-07/`.
 
 ## Repository layout
 
-There are three nested levels. The git root is the **outer** directory; the pnpm workspace is
-the **inner** directory; the running app is the **artifact**.
+The git root is the **outer** directory; the workspace is the **inner** directory; the
+running app is the **artifact**.
 
 ```
 <repo root>                                        ← OUTER (git root)
 ├── README.md                                      ← this file
-├── Abyssion-Legacy-of-Volion/                     ← INNER (pnpm workspace root)
-│   ├── package.json                               ← workspace scripts, preinstall guard
-│   ├── pnpm-workspace.yaml / pnpm-lock.yaml
-│   ├── tsconfig.base.json / tsconfig.json
-│   ├── attached_assets/                           ← task briefs and pasted brief attachments
-│   ├── native/                                    ← C++/SDL prototype + CMake build output
-│   ├── scripts/                                   ← workspace utility package
-│   ├── tmp/
-│   ├── lib/                                       ← shared workspace packages
-│   │   ├── api-spec/
-│   │   ├── api-client-react/
-│   │   ├── api-zod/
-│   │   └── db/
-│   └── artifacts/abyssion-legacy-of-volion/       ← ARTIFACT (the Vite + R3F app)
-│       ├── index.html
-│       ├── package.json
-│       ├── vite.config.ts                         ← requires PORT and BASE_PATH
-│       ├── components.json                        ← shadcn/ui config
-│       ├── public/                                ← favicon.svg, robots.txt
-│       ├── docs/art-spec.md                       ← the locked art direction
-│       ├── dist/                                  ← build output (generated)
-│       └── src/
-│           ├── main.tsx                           ← bootstrap, imports index.css
-│           ├── App.tsx / GameLayout.tsx / GamePage.tsx
-│           ├── index.css                          ← Tailwind theme + global tokens
-│           ├── pages/                             ← not-found
-│           ├── hooks/
-│           ├── components/ui/                     ← shadcn/ui primitives
-│           ├── components/game/                   ← gameplay and scene
-│           │   ├── GameScene.tsx                  ← R3F canvas, lights, fog, day cycle, world
-│           │   ├── Player.tsx                     ← player rig, weapons, skills, animation
-│           │   ├── GameHUD.tsx / UI.tsx / HudEditor.tsx
-│           │   ├── NPC.tsx / Checkpoint.tsx / InteractionManager.tsx
-│           │   ├── WorldFX.tsx                    ← damage numbers, sparks, particles, loot
-│           │   ├── EncounterArea.tsx / EnemyDummy.tsx
-│           │   ├── MainMenu.tsx / LoadingScreen.tsx / CreditsScreen.tsx
-│           │   ├── *Modal.tsx / Minimap.tsx / ExpandedMap.tsx
-│           │   └── enemies/                       ← BaseEnemy + six enemy types
-│           └── lib/                               ← store, content and tuning data
-│               ├── store.ts                       ← the single Zustand store (game state + UI)
-│               ├── combatConfig.ts / movementConfig.ts / encounterConfig.ts
-│               ├── weaponContent.ts / crossbowContent.ts / items.ts / inventory.ts
-│               ├── staffSkills.ts / swordSkills.ts / archetype.ts / progression.ts
-│               ├── spellRunner.ts / arrowRunner.ts / playerImpulse.ts
-│               ├── questData.ts / minimap.ts / hudConfig.ts
-│               └── combatAudio.ts / hiddenCombos.ts / translations.ts / useTranslation.ts
+├── LICENSE                                        ← MIT License
+└── Abyssion-Legacy-of-Volion/                     ← INNER (workspace root)
+    ├── package.json                               ← workspace scripts, preinstall guard
+    ├── pnpm-workspace.yaml / pnpm-lock.yaml
+    ├── tsconfig.base.json / tsconfig.json
+    ├── attached_assets/                           ← task briefs and pasted brief attachments
+    ├── native/                                    ← C++/SDL prototype + CMake build output
+    │   └── toolchain/                             ← project-local Zig + Odin toolchain
+    ├── scripts/                                   ← workspace utility package
+    ├── tmp/
+    ├── lib/                                       ← shared workspace packages
+    │   ├── api-spec/
+    │   ├── api-client-react/
+    │   ├── api-zod/
+    │   └── db/
+    └── artifacts/abyssion-legacy-of-volion/       ← ARTIFACT (the native app)
+        ├── docs/
+        │   ├── art-spec.md                        ← the locked art direction
+        │   └── LANGUAGE_POLICY.md                 ← authoritative language policy
+        └── src/
+            ├── components/game/                   ← gameplay and scene (retired)
+            │   └── enemies/                       ← BaseEnemy + six enemy types
+            └── lib/                               ← store, content and tuning data
 ```
 
 `native/` and `attached_assets/` are not part of the web build. Nothing in `src/` imports from
@@ -169,4 +147,19 @@ instead of re-deciding; it is only superseded by a new spec session.
 - Gameplay and scene components: `src/components/game/`
 - Enemy implementations: `src/components/game/enemies/`
 - Game state, content and tuning data: `src/lib/`
-- UI primitives (shadcn/ui): `src/components/ui/`
+- UI primitives (shadcn/ui): `src/components/ui/` *(retired)*
+
+## Language policy
+
+The authoritative language policy lives at
+`Abyssion-Legacy-of-Volion/artifacts/abyssion-legacy-of-volion/docs/LANGUAGE_POLICY.md`. It
+defines the current polyglot contract: C/C++ for the implementation, C at the ABI boundary,
+Rust for memory-safe subsystems, and project-local Zig and Odin toolchains under
+`native/toolchain/`.
+
+## License
+MIT License. See [`LICENSE`](LICENSE) for details.
+
+## Contact for Feature Request
+Whatsapp: https://wa.me/+6282229753236
+Tiktok: Ezrobyte
