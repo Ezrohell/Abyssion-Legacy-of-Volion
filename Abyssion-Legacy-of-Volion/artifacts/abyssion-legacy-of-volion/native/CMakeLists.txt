@@ -12,28 +12,30 @@ project(abyssion_native LANGUAGES C CXX)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
-# --- SDL 3.2.0 (M2D6 #2) ----------------------------------------------------
+# --- SDL 3.4.18 (M2D6 #2) ----------------------------------------------------
 # Vendored in source form at third_party/SDL/ from the official release asset
-# SDL3-3.2.0.tar.gz (release-3.2.0), sha256
-# bf308f92c5688b1479faf5cfe24af72f3cd4ce08d0c0670d6ce55bc2ec1e9a5e.
+# SDL3-3.4.18.tar.gz (release-3.4.18), sha256
+# 9c75cf16330322c217dedd2e0609f1124f1b54b8633e763467b4684d0f4334a3.
 # It is built from source by the same project-local Zig wrappers: no
 # FetchContent, no ExternalProject, no download at configure time.
 # Static-only and headless: this skeleton proves the toolchain and the link
 # path, it does not open a window and does not create a renderer.
 # The option names below are exactly the ones the vendored CMakeLists.txt
-# declares (lines 391-395): SDL_SHARED and SDL_STATIC via
+# declares (lines 397-401): SDL_SHARED and SDL_STATIC via
 # cmake_dependent_option, SDL_TEST_LIBRARY via option, SDL_TESTS via
-# dep_option. SDL 3.2.0 has no SDL_TEST option, so it is not set here.
+# dep_option. SDL 3.4.18 still declares no bare SDL_TEST option, so that
+# name is not set here, and the 3.4.x SDL_X11_XTEST option is switched off
+# separately below.
 set(SDL_SHARED OFF CACHE BOOL "" FORCE)
 set(SDL_STATIC ON CACHE BOOL "" FORCE)
 set(SDL_TEST_LIBRARY OFF CACHE BOOL "" FORCE)
 set(SDL_TESTS OFF CACHE BOOL "" FORCE)
-# SDL_WAYLAND is switched off for this environment only: SDL 3.2.0's Wayland
+# SDL_WAYLAND is switched off for this environment only: SDL 3.4.18's Wayland
 # backend needs libwayland >= 1.22 / wayland-protocols >= 1.33 headers
 # (WL_POINTER_AXIS_RELATIVE_DIRECTION_*, WL_SURFACE_PREFERRED_BUFFER_SCALE_*),
 # while this host ships libwayland 1.20.0 and older wayland-protocols. This
 # skeleton is headless and never opens a window, so the backend is not built.
-# Option name proven present in the vendored CMakeLists.txt, line 352
+# Option name proven present in the vendored CMakeLists.txt, line 355
 # (dep_option SDL_WAYLAND "Use Wayland video driver" ${UNIX_SYS} "SDL_VIDEO" OFF).
 set(SDL_WAYLAND OFF CACHE BOOL "" FORCE)
 
