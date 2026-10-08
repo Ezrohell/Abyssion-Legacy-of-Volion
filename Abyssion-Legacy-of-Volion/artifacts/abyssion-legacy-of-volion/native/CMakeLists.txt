@@ -127,13 +127,18 @@ add_library(abyssion_imgui STATIC
 target_include_directories(abyssion_imgui PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/third_party/imgui)
 
-add_executable(abyssion_native src/main.cpp)
+add_executable(abyssion_native
+    src/main.cpp
+    src/app/display.cpp
+    src/app/loop.cpp
+    src/app/smoke.cpp)
+target_include_directories(abyssion_native PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src)
 target_link_libraries(abyssion_native PRIVATE SDL3::SDL3-static abyssion_stb abyssion_imgui abyssion_mixer)
 
-# Window and frame loop are embedded in src/main.cpp. The default entry point
-# opens the SDL3 window and runs the frame loop. The existing seven-line smoke
-# output is preserved under the --smoke flag so the headless probe path stays
-# runnable without a display.
+# Window and frame loop are now in src/app/*.cpp. The default entry point runs
+# the seven-line smoke probe; --window runs the SDL3 window and frame loop. The
+# smoke output is preserved byte-for-byte under --smoke.
 target_compile_options(abyssion_native PRIVATE -DBABSION_NATIVE_WINDOW=1)
 
 # --- Math library (M2D6 #2 batch 2) -----------------------------------------
@@ -153,3 +158,26 @@ target_link_libraries(math_selftest PRIVATE abyssion_math)
 
 enable_testing()
 add_test(NAME math_selftest COMMAND math_selftest)
+
+# Temporary diagnostic target: build the baseline smoke path unchanged so we can
+# compare its --smoke behaviour against the modular smoke path byte-for-byte.
+add_executable(baseline_smoke /tmp/baseline/main.cpp)
+target_include_directories(baseline_smoke PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/third_party/imgui
+    ${CMAKE_CURRENT_SOURCE_DIR}/third_party/SDL/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/third_party/SDL_mixer/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/third_party/stb)
+target_compile_options(baseline_smoke PRIVATE -DBABSION_NATIVE_WINDOW=1)
+target_link_libraries(baseline_smoke PRIVATE SDL3::SDL3-static abyssion_stb abyssion_imgui abyssion_mixer)
+
+# Temporary diagnostic: inspect the headless ImGui draw-data stats in this
+# build exactly as the smoke path sees them, so the smoke rewrite can target
+# the real cause instead of guessing.
+add_executable(smoke_diag /tmp/smoke_diag.cpp)
+target_include_directories(smoke_diag PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/app
+    ${CMAKE_CURRENT_SOURCE_DIR}/third_party/imgui
+    ${CMAKE_CURRENT_SOURCE_DIR}/third_party/SDL/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/third_party/SDL_mixer/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/third_party/stb)
+target_link_libraries(smoke_diag PRIVATE SDL3::SDL3-static abyssion_stb abyssion_imgui abyssion_mixer)
