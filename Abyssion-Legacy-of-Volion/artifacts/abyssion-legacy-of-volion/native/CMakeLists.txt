@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.22)
 
-# Project-local Zig toolchain: pinned 0.13.0, extracted at
-# native/toolchain/zig/. The wrapper scripts invoke it as `zig cc` and
+# Project-local Zig toolchain: pinned 0.17.0, extracted at
+# native/toolchain/zig-0.17.0/. The wrapper scripts invoke it as `zig cc` and
 # `zig c++`; they are selected before project() so CMake adopts them as
 # the C and C++ compilers.
 set(CMAKE_C_COMPILER "${CMAKE_CURRENT_SOURCE_DIR}/toolchain/bin/zig-cc")
@@ -36,6 +36,15 @@ set(SDL_TESTS OFF CACHE BOOL "" FORCE)
 # Option name proven present in the vendored CMakeLists.txt, line 352
 # (dep_option SDL_WAYLAND "Use Wayland video driver" ${UNIX_SYS} "SDL_VIDEO" OFF).
 set(SDL_WAYLAND OFF CACHE BOOL "" FORCE)
+
+# SDL_X11_XTEST is switched off for this environment only: SDL 3.4.x added
+# the option with a default of ON, and its guard requires
+# X11/extensions/XTest.h which this host lacks (only the runtime library
+# libXtst.so.6 is present). This skeleton is headless and never opens a
+# window, so the X11 test extension is not needed.
+# Option name proven present in the vendored CMakeLists.txt, line 350
+# (dep_option(SDL_X11_XTEST "Enable XTest support" ON SDL_X11 OFF)).
+set(SDL_X11_XTEST OFF CACHE BOOL "" FORCE)
 add_subdirectory(third_party/SDL SDL-build)
 
 # --- SDL_Mixer 3.2.4 (M2W1D2 #2) ---------------------------------------------
