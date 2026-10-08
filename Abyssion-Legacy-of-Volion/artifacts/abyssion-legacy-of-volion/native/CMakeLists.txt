@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.22)
 
-# Project-local Zig toolchain: pinned 0.13.0, extracted at
-# native/toolchain/zig/. The wrapper scripts invoke it as `zig cc` and
+# Project-local Zig toolchain: pinned 0.17.0, extracted at
+# native/toolchain/zig-0.17.0/. The wrapper scripts invoke it as `zig cc` and
 # `zig c++`; they are selected before project() so CMake adopts them as
 # the C and C++ compilers.
 set(CMAKE_C_COMPILER "${CMAKE_CURRENT_SOURCE_DIR}/toolchain/bin/zig-cc")
