@@ -1,5 +1,6 @@
 #include <SDL3/SDL.h>
 #include <cstdio>
+#include <cstdlib>
 #include <string>
 
 #include "app/display.h"
@@ -11,6 +12,7 @@ int main(int argc, char **argv) {
 
 #ifdef BABSION_NATIVE_WINDOW
     bool window_mode = false;
+    int preview_seconds = 0;
     for (int i = 1; i < argc; ++i) {
         if (argv[i] == std::string("--window")) {
             window_mode = true;
@@ -21,6 +23,25 @@ int main(int argc, char **argv) {
             SDL_Quit();
             return exit_code;
         }
+        if (argv[i] == std::string("--preview")) {
+            if (i + 1 >= argc) {
+                std::fprintf(stderr,
+                             "Abyssion native skeleton: --preview needs a "
+                             "number of seconds\n");
+                SDL_Quit();
+                return 1;
+            }
+            preview_seconds = std::atoi(argv[i + 1]);
+            if (preview_seconds <= 0) {
+                std::fprintf(stderr,
+                             "Abyssion native skeleton: --preview seconds "
+                             "must be positive\n");
+                SDL_Quit();
+                return 1;
+            }
+            window_mode = true;
+            break;
+        }
     }
 
     if (window_mode) {
@@ -30,14 +51,16 @@ int main(int argc, char **argv) {
             SDL_Quit();
             return 1;
         }
-        const int loop_exit = abyssion::app::run_loop(display);
+        const int loop_exit =
+            abyssion::app::run_loop(display, preview_seconds);
         abyssion::app::destroy_display(display);
         SDL_Quit();
         return loop_exit;
     }
 
     std::fprintf(stderr,
-                 "Abyssion native skeleton: use --smoke or --window\n");
+                 "Abyssion native skeleton: use --smoke, --window or "
+                 "--preview <seconds>\n");
     SDL_Quit();
     return 1;
 #else
