@@ -54,8 +54,14 @@ int run_loop(Display &display, double max_seconds, const char *dump_path) {
     while (!quit) {
         processEvents(current);
 
-        if (current.quitRequested ||
-            isKeyJustPressed(current, previous, SDL_SCANCODE_ESCAPE)) {
+        // A window close (SDL_EVENT_QUIT) or a fresh escape press ends the
+        // run. The escape edge is recorded on the snapshot as a quit request
+        // too, so both paths end through the same flag.
+        if (isKeyJustPressed(current, previous, SDL_SCANCODE_ESCAPE)) {
+            current.quitRequested = true;
+        }
+
+        if (current.quitRequested) {
             quit = true;
         }
 
