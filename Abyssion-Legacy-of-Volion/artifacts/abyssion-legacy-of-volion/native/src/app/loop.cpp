@@ -108,9 +108,10 @@ int run_loop(Display &display, double max_seconds, const char *dump_path) {
 
             // --dump: after the first frame is presented, read the current
             // render target back with SDL_RenderReadPixels, hold it as an
-            // SDL_PIXELFORMAT_ARGB8888 surface and write it with SDL_SaveBMP,
-            // so the window is captured without any external screenshot tool.
-            // The process then leaves; dump failure returns 1.
+            // SDL_PIXELFORMAT_ARGB8888 surface and write it with SDL_SavePNG,
+            // SDL 3.4.18's built-in PNG encoder, so the window is captured
+            // without any external screenshot tool or BMP conversion helper.
+            // A failed save is logged and the run shuts down normally.
             if (dump_path != nullptr && !dumped) {
                 SDL_Surface *read_back =
                     SDL_RenderReadPixels(display.renderer, nullptr);
@@ -131,11 +132,9 @@ int run_loop(Display &display, double max_seconds, const char *dump_path) {
                         return 1;
                     }
                 }
-                bool dump_ok = true;
-                if (SDL_SaveBMP(frame, dump_path) == false) {
-                    std::fprintf(stderr, "SDL_SaveBMP failed: %s\n",
+                if (SDL_SavePNG(frame, dump_path) == false) {
+                    std::fprintf(stderr, "SDL_SavePNG failed: %s\n",
                                  SDL_GetError());
-                    dump_ok = false;
                 } else {
                     std::fprintf(stderr,
                                  "Abyssion native: dumped frame to %s\n",
@@ -145,9 +144,6 @@ int run_loop(Display &display, double max_seconds, const char *dump_path) {
                     SDL_DestroySurface(frame);
                 }
                 SDL_DestroySurface(read_back);
-                if (dump_ok == false) {
-                    return 1;
-                }
                 dumped = true;
                 quit = true;
             }
