@@ -1,33 +1,62 @@
 #include "app/loop.h"
+
 #include <cmath>
+#include <cstddef>
 #include <cstdio>
 
+#include "app/input.h"
+#include "app/render.h"
+
 namespace abyssion { namespace app {
+
+namespace {
+
+// The test sprite lives beside the source tree at native/assets/; resolve it
+// relative to the executable (build/abyssion_native) so the window runs from
+// any working directory, and fall back to the relative path when SDL cannot
+// report the base path.
+void spriteAssetPath(char *out, std::size_t out_size) {
+    const char *base = SDL_GetBasePath();
+    if (base != nullptr) {
+        std::snprintf(out, out_size, "%s../assets/test_sprite.png", base);
+        SDL_free(const_cast<char *>(base));
+    } else {
+        std::snprintf(out, out_size, "assets/test_sprite.png");
+    }
+}
+
+} // namespace
 
 int run_loop(Display &display, double max_seconds, const char *dump_path) {
     bool quit = false;
     bool dumped = false;
     int64_t prev_counter = SDL_GetPerformanceCounter();
 
-    // Visible content: a filled rectangle that advances across the window at a
-    // fixed rate and wraps at the right edge, so two captures taken seconds
-    // apart differ. It is drawn on top of the #1f1f1f clear colour.
-    constexpr float rect_width = 160.0f;
-    constexpr float rect_height = 90.0f;
-    constexpr float rect_speed = 240.0f; // pixels per second
-    // Start flush with the left edge: draw_x = rect_x - rect_width = 0.
-    float rect_x = rect_width;
+    // Input: `current` accumulates this frame's events, `previous` holds the
+    // completed state of the frame before it so edges can be compared.
+    InputState current{};
+    InputState previous{};
+
+    // Rendering: one renderer for the whole run; it owns the sprite texture.
+    Renderer renderer(display.renderer);
+    char sprite_path[512];
+    spriteAssetPath(sprite_path, sizeof(sprite_path));
+    SDL_Texture *sprite_texture = renderer.loadTexture(sprite_path);
+
+    // Visible content: a 64x64 test sprite drawn centred and rotating
+    // clockwise at 90 degrees per second, starting from a 45 degree tilt so
+    // a single captured frame already shows it off-axis. This replaces the
+    // plain moving rectangle of the previous milestone.
+    constexpr float sprite_size = 64.0f;
+    constexpr float rotation_speed = 90.0f; // degrees per second
+    float angle = 45.0f;
 
     while (!quit) {
-        SDL_Event event;
-        while (SDL_PollEvent(&event)) {
-            if (event.type == SDL_EVENT_QUIT) {
-                quit = true;
-            } else if (event.type == SDL_EVENT_KEY_DOWN) {
-                if (event.key.scancode == SDL_SCANCODE_ESCAPE) {
-                    quit = true;
-                }
-            }
+        processEvents(current);
+
+        if (current.quitRequested ||
+            isKeyJustPressed(current, previous, SDL_SCANCODE_ESCAPE)) {
+            quit = true;
         }
 
         if (!quit && max_seconds > 0.0) {
@@ -48,14 +77,6 @@ int run_loop(Display &display, double max_seconds, const char *dump_path) {
             }
             prev_counter = now;
 
-            SDL_SetRenderDrawColor(display.renderer, 31, 31, 31, 255);
-            if (SDL_RenderClear(display.renderer) == false) {
-                std::fprintf(stderr, "SDL_RenderClear failed: %s\n",
-                             SDL_GetError());
-                quit = true;
-                continue;
-            }
-
             int window_width = 0;
             int window_height = 0;
             if (SDL_GetWindowSizeInPixels(display.window, &window_width,
@@ -66,36 +87,30 @@ int run_loop(Display &display, double max_seconds, const char *dump_path) {
                 continue;
             }
 
-            const float travel =
-                static_cast<float>(window_width) + rect_width;
-            rect_x = std::fmod(rect_x + rect_speed * delta, travel);
-            const SDL_FRect rect = {
-                rect_x - rect_width,
-                0.5f * (static_cast<float>(window_height) - rect_height),
-                rect_width,
-                rect_height,
-            };
-            SDL_SetRenderDrawColor(display.renderer, 155, 155, 155, 255);
-            if (SDL_RenderFillRect(display.renderer, &rect) == false) {
-                std::fprintf(stderr, "SDL_RenderFillRect failed: %s\n",
-                             SDL_GetError());
-                quit = true;
-                continue;
-            }
+            angle = std::fmod(angle + rotation_speed * delta, 360.0f);
 
-            if (SDL_RenderPresent(display.renderer) == false) {
-                std::fprintf(stderr, "SDL_RenderPresent failed: %s\n",
-                             SDL_GetError());
-                quit = true;
-                continue;
-            }
+            Sprite sprite;
+            sprite.texture = sprite_texture;
+            sprite.src = SDL_FRect{0.0f, 0.0f, sprite_size, sprite_size};
+            sprite.dst = SDL_FRect{
+                0.5f * (static_cast<float>(window_width) - sprite_size),
+                0.5f * (static_cast<float>(window_height) - sprite_size),
+                sprite_size,
+                sprite_size,
+            };
+            sprite.angle = angle;
+            sprite.center = SDL_FPoint{0.5f * sprite_size, 0.5f * sprite_size};
+            sprite.flip = SDL_FLIP_NONE;
+
+            renderer.begin();
+            renderer.draw(sprite);
+            renderer.end();
 
             // --dump: after the first frame is presented, read the current
             // render target back with SDL_RenderReadPixels, hold it as an
-            // SDL_PIXELFORMAT_ARGB8888 surface and write it with
-            // SDL_SaveBMP, so the window is captured without any external
-            // screenshot tool. The process then leaves; dump failure
-            // returns 1.
+            // SDL_PIXELFORMAT_ARGB8888 surface and write it with SDL_SaveBMP,
+            // so the window is captured without any external screenshot tool.
+            // The process then leaves; dump failure returns 1.
             if (dump_path != nullptr && !dumped) {
                 SDL_Surface *read_back =
                     SDL_RenderReadPixels(display.renderer, nullptr);
@@ -136,6 +151,8 @@ int run_loop(Display &display, double max_seconds, const char *dump_path) {
                 dumped = true;
                 quit = true;
             }
+
+            previous = current;
         }
     }
 

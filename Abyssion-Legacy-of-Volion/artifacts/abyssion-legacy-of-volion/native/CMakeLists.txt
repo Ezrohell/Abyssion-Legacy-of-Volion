@@ -130,7 +130,9 @@ target_include_directories(abyssion_imgui PUBLIC
 add_executable(abyssion_native
     src/main.cpp
     src/app/display.cpp
+    src/app/input.cpp
     src/app/loop.cpp
+    src/app/render.cpp
     src/app/smoke.cpp)
 target_include_directories(abyssion_native PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/src)

@@ -12,17 +12,19 @@ int main(int argc, char **argv) {
 
 #ifdef BABSION_NATIVE_WINDOW
     bool window_mode = false;
+    bool smoke_mode = false;
     int preview_seconds = 0;
     const char *dump_path = nullptr;
+    // Every recognised flag is parsed, so combinations such as
+    // "--window --preview 5" and "--dump <path> --preview 5" all apply.
     for (int i = 1; i < argc; ++i) {
         if (argv[i] == std::string("--window")) {
             window_mode = true;
-            break;
+            continue;
         }
         if (argv[i] == std::string("--smoke")) {
-            const int exit_code = abyssion::app::run_smoke();
-            SDL_Quit();
-            return exit_code;
+            smoke_mode = true;
+            continue;
         }
         if (argv[i] == std::string("--preview")) {
             if (i + 1 >= argc) {
@@ -41,7 +43,8 @@ int main(int argc, char **argv) {
                 return 1;
             }
             window_mode = true;
-            break;
+            ++i;
+            continue;
         }
         if (argv[i] == std::string("--dump")) {
             if (i + 1 >= argc) {
@@ -53,8 +56,15 @@ int main(int argc, char **argv) {
             }
             dump_path = argv[i + 1];
             window_mode = true;
-            break;
+            ++i;
+            continue;
         }
+    }
+
+    if (smoke_mode) {
+        const int exit_code = abyssion::app::run_smoke();
+        SDL_Quit();
+        return exit_code;
     }
 
     if (window_mode) {
