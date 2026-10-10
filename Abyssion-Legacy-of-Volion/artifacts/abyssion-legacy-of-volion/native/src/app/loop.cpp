@@ -14,12 +14,12 @@ namespace {
 // The test sprite lives beside the source tree at native/assets/; resolve it
 // relative to the executable (build/abyssion_native) so the window runs from
 // any working directory, and fall back to the relative path when SDL cannot
-// report the base path.
+// report the base path. SDL caches the base path internally and keeps
+// ownership of it, so the returned pointer must not be freed here.
 void spriteAssetPath(char *out, std::size_t out_size) {
     const char *base = SDL_GetBasePath();
     if (base != nullptr) {
         std::snprintf(out, out_size, "%s../assets/test_sprite.png", base);
-        SDL_free(const_cast<char *>(base));
     } else {
         std::snprintf(out, out_size, "assets/test_sprite.png");
     }
