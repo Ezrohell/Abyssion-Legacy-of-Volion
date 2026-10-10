@@ -161,5 +161,5 @@ Rust for memory-safe subsystems, and project-local Zig and Odin toolchains under
 MIT License. See [`LICENSE`](LICENSE) for details.
 
 ## Contact for Feature Request
-Whatsapp: https://wa.me/+6282229753236
-Tiktok: Ezrobyte
+Whatsapp: https://wa.me/+6282229753236 ㅤㅤㅤㅤㅤㅤㅤㅤㅤㅤㅤㅤ
+Tiktok: https://tiktok.com/@ezrobyte
